@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="favicon.ico" type="image/x-icon">
+<title>客户背景调研工具</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f0f4f8; color: #1a202c; min-height: 100vh; }
+
+  .header { background: linear-gradient(135deg, #1e3a5f 0%, #3b82f6 100%); color: white; padding: 24px 0; text-align: center; position: sticky; top: 0; z-index: 100; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+  .header h1 { font-size: 24px; font-weight: 700; }
+  .header p { font-size: 13px; opacity: 0.8; margin-top: 4px; }
+
+  .main { max-width: 960px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  .card { background: white; border-radius: 14px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); border: 1px solid #e8ecf1; }
+  .card-title { font-size: 16px; font-weight: 700; color: #1e3a5f; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+
+  .form-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .form-group { flex: 1; min-width: 180px; }
+  .form-group.full { flex: 100%; min-width: 100%; }
+  .form-group label { display: block; font-size: 12px; color: #64748b; margin-bottom: 5px; font-weight: 600; }
+  .form-group input, .form-group textarea {
+    width: 100%; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 10px;
+    font-size: 14px; font-weight: 500; transition: all 0.2s; background: #f8fafc; outline: none; font-family: inherit;
+  }
+  .form-group input:focus, .form-group textarea:focus { border-color: #3b82f6; background: white; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+  .form-group .hint { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+
+  .hidden { display: none !important; }
+
+  /* 步骤指示器 */
+  .steps { display: flex; gap: 0; margin-bottom: 20px; }
+  .step { flex: 1; text-align: center; padding: 14px 8px; position: relative; }
+  .step .num { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: #e2e8f0; color: #94a3b8; font-size: 14px; font-weight: 700; margin-bottom: 6px; transition: all 0.3s; }
+  .step .txt { font-size: 12px; color: #94a3b8; font-weight: 600; transition: all 0.3s; }
+  .step.active .num { background: #3b82f6; color: white; }
+  .step.active .txt { color: #1e3a5f; }
+  .step.done .num { background: #22c55e; color: white; }
+  .step.done .txt { color: #166534; }
+  .step::after { content: ''; position: absolute; top: 28px; right: -10%; width: 20%; height: 3px; background: #e2e8f0; }
+  .step:last-child::after { display: none; }
+  .step.done::after { background: #22c55e; }
+  .step.active::after { background: #3b82f6; }
+
+  /* 按钮 */
+  .btn { display: block; width: 100%; padding: 14px; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; transition: all 0.3s; letter-spacing: 1px; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn-blue { background: linear-gradient(135deg, #1e3a5f, #3b82f6); color: white; }
+  .btn-blue:hover { box-shadow: 0 6px 20px rgba(59,130,246,0.3); }
+  .btn-green { background: linear-gradient(135deg, #166534, #22c55e); color: white; }
+  .btn-green:hover { box-shadow: 0 6px 20px rgba(34,197,94,0.3); }
+
+  /* 提问词展示 */
+  .prompt-box { background: #1e293b; color: #e2e8f0; border-radius: 12px; padding: 18px; font-size: 13px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto; font-family: 'SF Mono', 'Menlo', 'Monaco', monospace; position: relative; }
+  .prompt-box::selection { background: #3b82f6; }
+
+  .copy-btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 24px; background: #3b82f6; color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; margin-top: 12px; }
+  .copy-btn:hover { background: #2563eb; transform: translateY(-1px); }
+  .copy-btn.copied { background: #22c55e; }
+
+  .ai-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .ai-link { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; color: #334155; text-decoration: none; font-weight: 600; transition: all 0.2s; }
+  .ai-link:hover { border-color: #3b82f6; background: #eff6ff; color: #1e40af; }
+
+  /* 粘贴区 */
+  .paste-area { width: 100%; min-height: 300px; padding: 16px; border: 2px dashed #cbd5e1; border-radius: 12px; font-size: 13px; line-height: 1.8; background: #f8fafc; outline: none; font-family: inherit; resize: vertical; transition: border-color 0.2s; }
+  .paste-area:focus { border-color: #3b82f6; border-style: solid; background: white; }
+  .paste-area::placeholder { color: #94a3b8; }
+
+  /* 报告 */
+  .rpt-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+  .rpt-head h2 { font-size: 20px; color: #1e3a5f; }
+  .rpt-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .rpt-btn { padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid #d1d5db; background: white; color: #475569; }
+  .rpt-btn:hover { background: #f1f5f9; }
+  .rpt-btn.primary { background: #3b82f6; color: white; border-color: #3b82f6; }
+  .rpt-btn.primary:hover { background: #2563eb; }
+
+  .match-badge { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 10px; font-size: 14px; font-weight: 700; }
+  .match-badge.high { background: #dcfce7; color: #166534; }
+  .match-badge.medium { background: #fef9c3; color: #854d0e; }
+  .match-badge.low { background: #fee2e2; color: #991b1b; }
+
+  .section { margin-bottom: 14px; border: 1px solid #e8ecf1; border-radius: 12px; overflow: hidden; }
+  .sec-hd { padding: 14px 18px; background: #f8fafc; border-bottom: 1px solid #e8ecf1; display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .sec-hd:hover { background: #f1f5f9; }
+  .sec-hd h3 { font-size: 14px; font-weight: 700; color: #1e3a5f; flex: 1; }
+  .sec-hd .arr { font-size: 12px; color: #94a3b8; }
+  .sec-bd { padding: 18px; font-size: 13px; color: #334155; line-height: 1.9; }
+  .sec-bd.off { display: none; }
+  .sec-bd h4 { font-size: 13px; color: #1e3a5f; margin: 12px 0 4px; }
+  .sec-bd ul, .sec-bd ol { padding-left: 20px; margin: 6px 0; }
+  .sec-bd li { margin: 4px 0; }
+  .sec-bd p { margin: 6px 0; }
+  .sec-bd strong { color: #1e293b; }
+
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; margin: 0 4px 0 0; }
+  .tag.red { background: #fee2e2; color: #991b1b; }
+  .tag.yellow { background: #fef9c3; color: #854d0e; }
+  .tag.green { background: #dcfce7; color: #166534; }
+
+  .disclaimer { font-size: 11px; color: #94a3b8; background: #f8fafc; padding: 12px; border-radius: 8px; margin-top: 16px; line-height: 1.7; }
+  .footer { text-align: center; font-size: 11px; color: #94a3b8; padding: 20px; line-height: 1.8; }
+
+  @media (max-width: 640px) {
+    .form-row { flex-direction: column; }
+    .form-group { min-width: 100%; }
+    .step .txt { font-size: 10px; }
+  }
+  @media print {
+    .header, .steps, .footer, .rpt-actions, #step1Card, #step2Card, #step3Card { display: none !important; }
+    #rptCard { display: block !important; }
+    .sec-bd.off { display: block !important; }
+    body { background: white; }
+    .card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🔍 客户背景调研工具</h1>
+  <p>三步出报告 · 无需 API · 完全免费</p>
+</div>
+
+<div class="main">
+
+  <!-- 步骤条 -->
+  <div class="steps">
+    <div class="step active" id="s1"><div class="num">1</div><div class="txt">填写客户信息</div></div>
+    <div class="step" id="s2"><div class="num">2</div><div class="txt">复制到 AI 获取回答</div></div>
+    <div class="step" id="s3"><div class="num">3</div><div class="txt">粘贴生成报告</div></div>
+  </div>
+
+  <!-- Step 1：输入 -->
+  <div class="card" id="step1Card">
+    <div class="card-title">📝 第一步：填写客户信息</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>客户名称 *</label>
+        <input type="text" id="iName" placeholder="如：Dollar Tree, DAISO, IKEA">
+      </div>
+      <div class="form-group">
+        <label>国家/地区 *</label>
+        <input type="text" id="iCountry" placeholder="如：美国、日本、德国">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>我们的产品品类 *</label>
+        <input type="text" id="iCategory" placeholder="如：家居收纳用品、厨房小工具、LED灯具">
+      </div>
+      <div class="form-group">
+        <label>客户网站（选填）</label>
+        <input type="text" id="iWebsite" placeholder="如：www.dollartree.com">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group full">
+        <label>补充说明（选填）</label>
+        <textarea id="iExtra" rows="2" placeholder="如：该客户是通过展会认识的，主要做线上渠道..."></textarea>
+        <div class="hint">已知的线索有助于生成更精准的报告</div>
+      </div>
+    </div>
+    <button class="btn btn-blue" onclick="genPrompt()">生成调研提问词 →</button>
+  </div>
+
+  <!-- Step 2：复制提问词 -->
+  <div class="card hidden" id="step2Card">
+    <div class="card-title">📋 第二步：复制提问词，粘贴到任意免费 AI</div>
+    <div class="prompt-box" id="promptBox"></div>
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top: 12px;">
+      <button class="copy-btn" id="copyBtn" onclick="copyPrompt()">📋 一键复制提问词</button>
+      <span style="font-size:12px;color:#94a3b8;">复制后打开下面任意一个免费 AI ↓</span>
+    </div>
+    <div class="ai-links">
+      <a class="ai-link" href="https://www.perplexity.ai/" target="_blank">🔍 Perplexity（推荐，自带搜索）</a>
+      <a class="ai-link" href="https://kimi.moonshot.cn/" target="_blank">🤖 Kimi（支持联网）</a>
+      <a class="ai-link" href="https://chatgpt.com/" target="_blank">💬 ChatGPT</a>
+      <a class="ai-link" href="https://chat.deepseek.com/" target="_blank">🧠 DeepSeek</a>
+      <a class="ai-link" href="https://gemini.google.com/" target="_blank">✨ Gemini</a>
+    </div>
+    <div style="margin-top:16px; padding:12px; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; font-size:12px; color:#92400e; line-height:1.7;">
+      💡 <b>建议用 Perplexity 或 Kimi</b>，它们自带联网搜索功能，数据更实时。ChatGPT/DeepSeek 也可以，但可能需要开启「联网搜索」开关。
+    </div>
+    <div style="display:flex; gap:10px; margin-top:16px;">
+      <button class="btn btn-blue" style="flex:1;" onclick="goStep3()">我已拿到 AI 回答，下一步 →</button>
+      <button class="rpt-btn" style="padding:14px 20px;" onclick="goStep1()">← 返回修改</button>
+    </div>
+  </div>
+
+  <!-- Step 3：粘贴结果 -->
+  <div class="card hidden" id="step3Card">
+    <div class="card-title">📥 第三步：粘贴 AI 的回答</div>
+    <p style="font-size:13px; color:#64748b; margin-bottom:12px;">把 AI 返回的全部内容复制粘贴到下面，工具会自动排版成专业报告：</p>
+    <textarea class="paste-area" id="pasteArea" placeholder="在这里粘贴 AI 的回答内容...
+
+提示：直接 Ctrl+V 粘贴即可，支持 Markdown 格式"></textarea>
+    <div style="display:flex; gap:10px; margin-top:14px;">
+      <button class="btn btn-green" style="flex:1;" onclick="genReport()">生成报告</button>
+      <button class="rpt-btn" style="padding:14px 20px;" onclick="goStep2()">← 返回上一步</button>
+    </div>
+  </div>
+
+  <!-- 报告 -->
+  <div class="card hidden" id="rptCard"></div>
+
+</div>
+
+<div class="footer">
+  📌 数据来源于 AI 联网搜索的公开信息，仅供内部参考<br>
+  无需 API · 无需付费 · 无数据上传
+</div>
+
+<script>
+let savedName = '', savedCountry = '', savedCategory = '';
+
+// ============ 步骤导航 ============
+function setStep(n) {
+  ['s1','s2','s3'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.className = 'step' + (i+1 < n ? ' done' : i+1 === n ? ' active' : '');
+  });
+}
+
+function goStep1() {
+  setStep(1);
+  document.getElementById('step1Card').classList.remove('hidden');
+  document.getElementById('step2Card').classList.add('hidden');
+  document.getElementById('step3Card').classList.add('hidden');
+  document.getElementById('rptCard').classList.add('hidden');
+  document.getElementById('step1Card').scrollIntoView({ behavior: 'smooth' });
+}
+
+function goStep2() {
+  setStep(2);
+  document.getElementById('step1Card').classList.add('hidden');
+  document.getElementById('step2Card').classList.remove('hidden');
+  document.getElementById('step3Card').classList.add('hidden');
+  document.getElementById('rptCard').classList.add('hidden');
+  document.getElementById('step2Card').scrollIntoView({ behavior: 'smooth' });
+}
+
+function goStep3() {
+  setStep(3);
+  document.getElementById('step1Card').classList.add('hidden');
+  document.getElementById('step2Card').classList.add('hidden');
+  document.getElementById('step3Card').classList.remove('hidden');
+  document.getElementById('rptCard').classList.add('hidden');
+  document.getElementById('step3Card').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ============ Step1: 生成提问词 ============
+function genPrompt() {
+  const name = document.getElementById('iName').value.trim();
+  const country = document.getElementById('iCountry').value.trim();
+  const category = document.getElementById('iCategory').value.trim();
+  const website = document.getElementById('iWebsite').value.trim();
+  const extra = document.getElementById('iExtra').value.trim();
+
+  if (!name || !country || !category) { alert('请填写客户名称、国家和产品品类'); return; }
+
+  savedName = name; savedCountry = country; savedCategory = category;
+
+  const prompt = `请帮我调研以下外贸客户的背景信息。请通过联网搜索获取最新数据，确保信息真实可靠。
+
+【目标客户】${name}
+【所在国家】${country}
+【我方产品品类】${category}
+${website ? `【客户网站】${website}` : ''}
+${extra ? `【已知线索】${extra}` : ''}
+
+请严格按照以下结构输出，每个板块用 ## 标题分隔。非常重要：只输出你能搜索确认的真实信息，查不到的请标注"[未查到公开信息]"，基于经验的推断请标注"[推测]"，绝对不要编造数据。
+
+## 1. 公司基本资料
+- 公司全称、成立时间、总部地址
+- 公司规模（营收/员工数/门店数，注明数据年份来源）
+- 上市状态和股票代码（如有）
+- 主营业务和行业定位
+- 所有权结构（上市/家族/PE等）
+
+## 2. 销售渠道与市场布局
+- 主要销售渠道（门店/电商/批发/分销）
+- 市场覆盖范围
+- 线上平台布局
+- 线下门店数量和分布
+
+## 3. 采购品类与采购风格
+- 主要采购品类
+- 是否采购与"${category}"相关的产品
+- 采购决策风格（集中/分散、招标/长期合作）
+- 采购周期和频率
+- 对供应商的要求（认证、验厂、MOQ）
+
+## 4. 价格定位与价格带
+- 市场定位（高端/中端/性价比/低价）
+- 终端售价区间（与${category}相关）
+- 采购价格敏感度
+
+## 5. 供应链模式
+- 供应商来源国
+- 采购模式（工厂直采/贸易商/采购办）
+- 是否在中国有采购办或验厂机构
+- 物流偏好（FOB/CIF）
+
+## 6. 终端客户群体
+- 目标消费者画像
+- 购买偏好和价格敏感度
+- 主要消费场景
+
+## 7. 竞争格局
+- 主要竞争对手
+- 差异化定位
+- 市场份额/排名
+
+## 8. 近期动态
+- 近1-2年重要新闻和战略动向
+- 扩张计划或新品类布局
+- 与中国供应商相关的变化
+
+## 9. 合作匹配度评估
+- 匹配度评分：[高/中/低]
+- 匹配理由（品类、价格带、渠道、采购模式等维度）
+- 开发建议（切入策略、准备事项）
+- 潜在风险
+
+## 10. 信息可靠性说明
+- 确认的公开数据（注明来源）
+- 合理推测（标注[推测]）
+- 未查到的信息（标注[未查到公开信息]）`;
+
+  document.getElementById('promptBox').textContent = prompt;
+  goStep2();
+}
+
+// ============ 复制 ============
+function copyPrompt() {
+  const text = document.getElementById('promptBox').textContent;
+  const btn = document.getElementById('copyBtn');
+
+  function onSuccess() {
+    btn.textContent = '✅ 已复制！去粘贴到 AI 吧';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '📋 一键复制提问词'; btn.classList.remove('copied'); }, 3000);
+  }
+
+  function doCopy() {
+    // 方式1：navigator.clipboard（需安全上下文）
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(onSuccess).catch(() => copyByRange());
+    } else {
+      // 方式2：Selection API + execCommand（兼容内网 http 环境）
+      copyByRange();
+    }
+  }
+
+  function copyByRange() {
+    // 先保存页面上已有的选中区域
+    const prevSel = window.getSelection ? window.getSelection() : null;
+    const prevRange = prevSel && prevSel.rangeCount > 0 ? prevSel.getRangeAt(0) : null;
+
+    try {
+      // 创建一个只读的隐藏 textarea，填入文本
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.setAttribute('readonly', '');
+      el.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;overflow:hidden;resize:none;border:none;outline:none;padding:0;margin:0;clip:rect(0,0,0,0);';
+      document.body.appendChild(el);
+      el.focus();
+
+      // 选中全部内容
+      if (el.setSelectionRange) {
+        el.setSelectionRange(0, text.length);
+      } else {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      // 复制
+      const ok = document.execCommand('copy');
+      document.body.removeChild(el);
+
+      // 恢复之前的选中
+      if (prevSel && prevRange) {
+        prevSel.removeAllRanges();
+        prevSel.addRange(prevRange);
+      }
+
+      if (ok) {
+        onSuccess();
+      } else {
+        alert('复制失败，请尝试：全选提问词框内容 → 右键复制');
+      }
+    } catch(e) {
+      alert('复制失败，请尝试：全选提问词框内容 → 右键复制');
+    }
+  }
+
+  doCopy();
+}
+
+// ============ Step3: 生成报告 ============
+function genReport() {
+  const raw = document.getElementById('pasteArea').value.trim();
+  if (!raw) { alert('请先粘贴 AI 的回答内容'); return; }
+  if (raw.length < 100) { alert('内容太短，请确认已完整粘贴 AI 的回答'); return; }
+
+  const sections = parseSections(raw);
+  if (sections.length < 3) {
+    // 如果没有 ## 分段，尝试其他格式
+    if (raw.includes('**1.') || raw.includes('### 1')) {
+      // 有可能是不同格式，直接整体显示
+      renderRawReport(raw);
+      return;
+    }
+  }
+  renderReport(sections, raw);
+}
+
+function parseSections(md) {
+  const lines = md.split('\n');
+  const out = [];
+  let cur = null;
+  for (const ln of lines) {
+    // 匹配 ## 1. xxx / ## xxx / ### 1. xxx
+    const m = ln.match(/^#{2,3}\s+\d*\.?\s*(.*)/);
+    if (m) {
+      if (cur) out.push(cur);
+      cur = { title: m[1].trim(), body: '' };
+    } else if (cur) {
+      cur.body += ln + '\n';
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+function renderReport(sections, raw) {
+  const card = document.getElementById('rptCard');
+  card.classList.remove('hidden');
+  setStep(3);
+  document.getElementById('step3Card').classList.add('hidden');
+
+  // 匹配度
+  let ml = 'medium', mt = '中';
+  const s9 = sections.find(s => s.title.includes('匹配'));
+  if (s9) {
+    if (/评分[：:]\s*\**高|匹配度[：:]\s*\**高|\*\*高\*\*/i.test(s9.body)) { ml='high'; mt='高'; }
+    else if (/评分[：:]\s*\**低|匹配度[：:]\s*\**低|\*\*低\*\*/i.test(s9.body)) { ml='low'; mt='低'; }
+  }
+
+  const icons = ['🏢','🛒','📦','💰','🔗','👥','⚔️','📰','🎯','📌'];
+  let h = `<div class="rpt-head">
+    <div>
+      <h2>📋 ${esc(savedName)} · 客户调研报告</h2>
+      <div style="font-size:12px;color:#94a3b8;margin-top:4px;">
+        ${esc(savedCountry)} · ${esc(savedCategory)} · ${new Date().toLocaleString('zh-CN')}
+      </div>
+    </div>
+    <div class="rpt-actions">
+      <div class="match-badge ${ml}">合作匹配度：${mt}</div>
+      <button class="rpt-btn" onclick="copyAll()">📋 复制全文</button>
+      <button class="rpt-btn primary" onclick="window.print()">🖨️ 打印/PDF</button>
+      <button class="rpt-btn" onclick="goStep1()">🔄 新调研</button>
+    </div>
+  </div>`;
+
+  sections.forEach((sec, i) => {
+    h += `<div class="section">
+      <div class="sec-hd" onclick="toggleSec(this)">
+        <h3>${icons[i]||'📄'} ${esc(sec.title)}</h3>
+        <span class="arr">▼</span>
+      </div>
+      <div class="sec-bd">${mdToHtml(sec.body)}</div>
+    </div>`;
+  });
+
+  h += `<div class="disclaimer">
+    ⚠️ <b>免责声明：</b>本报告由 AI 基于公开互联网信息生成。标注"[推测]"为行业经验推断，标注"[未查到公开信息]"表示未能获取。所有数据仅供内部参考，重要决策请进一步核实。
+  </div>`;
+  h += `<textarea id="rawAll" style="position:absolute;left:-9999px">${esc(raw)}</textarea>`;
+
+  card.innerHTML = h;
+  card.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderRawReport(raw) {
+  const card = document.getElementById('rptCard');
+  card.classList.remove('hidden');
+  setStep(3);
+  document.getElementById('step3Card').classList.add('hidden');
+
+  let h = `<div class="rpt-head">
+    <div><h2>📋 ${esc(savedName)} · 客户调研报告</h2>
+    <div style="font-size:12px;color:#94a3b8;margin-top:4px;">${esc(savedCountry)} · ${esc(savedCategory)} · ${new Date().toLocaleString('zh-CN')}</div></div>
+    <div class="rpt-actions">
+      <button class="rpt-btn" onclick="copyAll()">📋 复制</button>
+      <button class="rpt-btn primary" onclick="window.print()">🖨️ 打印</button>
+      <button class="rpt-btn" onclick="goStep1()">🔄 新调研</button>
+    </div>
+  </div>
+  <div class="sec-bd">${mdToHtml(raw)}</div>
+  <textarea id="rawAll" style="position:absolute;left:-9999px">${esc(raw)}</textarea>`;
+  card.innerHTML = h;
+  card.scrollIntoView({ behavior: 'smooth' });
+}
+
+function mdToHtml(md) {
+  let h = md
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
+    .replace(/^####?\s+(.*)/gm, '<h4>$1</h4>')
+    .replace(/^[-*]\s+(.*)/gm, '<li>$1</li>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:#3b82f6">$1</a>')
+    .replace(/\[未查到公开信息\]/g, '<span class="tag red">[未查到公开信息]</span>')
+    .replace(/\[推测\]/g, '<span class="tag yellow">[推测]</span>');
+  h = h.replace(/(<li>.*?<\/li>\n?)+/gs, m => '<ul>' + m + '</ul>');
+  h = h.replace(/\n\n+/g, '</p><p>');
+  h = '<p>' + h + '</p>';
+  h = h.replace(/<p>\s*<\/p>/g,'').replace(/<p>\s*<ul>/g,'<ul>').replace(/<\/ul>\s*<\/p>/g,'</ul>')
+       .replace(/<p>\s*<h4>/g,'<h4>').replace(/<\/h4>\s*<\/p>/g,'</h4>');
+  return h;
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function toggleSec(hd) {
+  const bd = hd.nextElementSibling;
+  bd.classList.toggle('off');
+  hd.querySelector('.arr').textContent = bd.classList.contains('off') ? '▶' : '▼';
+}
+
+function copyAll() {
+  const el = document.getElementById('rawAll');
+  if (!el) return;
+  navigator.clipboard.writeText(el.value).then(() => alert('已复制！')).catch(() => {
+    el.style.left='0'; el.select(); document.execCommand('copy'); el.style.left='-9999px'; alert('已复制！');
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+services:
+  customer-research-7004:
+    build: .
+    container_name: customer-research-7004
+    ports:
+      - "7004:80"
+    restart: unless-stopped
