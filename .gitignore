@@ -1,5 +1,6 @@
 .env
 config.json
+PROJECT-REGISTRATION.md
 .vscode/
 .idea/
 .DS_Store
