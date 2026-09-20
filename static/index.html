@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+<title>客户背景调研 · EGO</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div class="layout">
+  <!-- 侧栏 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-brand">
+      <div class="sb-logo">🔍</div>
+      <div class="sb-brand-txt">
+        <b>客户调研中心</b>
+        <span>Customer Research</span>
+      </div>
+    </div>
+    <div class="sb-toggle">
+      <button onclick="toggleSidebar()"><span style="font-weight:800">»</span><span class="lbl">收起侧栏</span></button>
+    </div>
+    <nav class="sb-nav">
+      <div class="sb-group-label">工作</div>
+      <div class="sb-link active" id="nav-entry" onclick="go('entry')"><span class="ic">📇</span><span class="lbl">名片宝</span></div>
+      <div class="sb-link" id="nav-library" onclick="go('library')"><span class="ic">🗂️</span><span class="lbl">客户库</span></div>
+      <div class="sb-link" id="nav-settings" onclick="go('settings')"><span class="ic">⚙️</span><span class="lbl">设置</span></div>
+    </nav>
+    <div class="sb-user">
+      <div class="sb-avatar">E</div>
+      <div class="sb-user-txt"><b>EGO 外贸</b><span>展会拓客 · 调研</span></div>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" onclick="openSidebar()" aria-label="打开菜单">☰</button>
+      <div>
+        <h1 id="tb-title">名片宝</h1>
+        <div class="sub" id="tb-sub"></div>
+      </div>
+      <div id="tb-actions"></div>
+    </header>
+    <div class="content">
+      <div class="content-inner">
+        <!-- 录入调研视图 -->
+        <section id="view-entry" class="view"></section>
+        <!-- 客户库视图 -->
+        <section id="view-library" class="view" style="display:none"></section>
+        <!-- 设置视图 -->
+        <section id="view-settings" class="view" style="display:none"></section>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="lightbox-host"></div>
+<div class="sb-overlay" id="sbOverlay" onclick="closeSidebar()"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

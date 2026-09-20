@@ -3,5 +3,12 @@ services:
     build: .
     container_name: customer-research-7004
     ports:
-      - "7004:80"
+      - "7004:8000"
+    env_file:
+      - .env
+    volumes:
+      - cr_data:/app/data
     restart: unless-stopped
+
+volumes:
+  cr_data:

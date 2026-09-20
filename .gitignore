@@ -1,6 +1,11 @@
 .env
+config.json
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 .workbuddy/
+data/
+*.log
+__pycache__/
+*.pyc
