@@ -1,5 +1,3 @@
-<p align="center"><img src="assets/readme-cover.png" alt="Customer Research project cover" width="100%" /></p>
-
 <div align="center">
 
 # 名片宝 · Card Research Workspace
