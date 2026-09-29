@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/readme-cover.png" alt="Customer Research project cover" width="100%" /></p>
+
 <div align="center">
 
 # 名片宝 · Card Research Workspace
@@ -118,6 +120,8 @@ uvicorn app:app --reload --port 7004
 ├── docker-compose.yml
 └── .env.example           # 不含真实凭据的环境变量模板
 ```
+
+> 完整的架构设计、数据流、API 清单与数据模型见 **[PROJECT-STRUCTURE.md](PROJECT-STRUCTURE.md)**；项目登记归档资料见 [PROJECT-REGISTRATION.md](PROJECT-REGISTRATION.md)。
 
 ## ⚠️ 数据边界
 
