@@ -22,22 +22,64 @@
 - **媒体富集**：配置 Serper、Brave 或 Tavily 后，调研报告可展示相关图片和视频卡片；默认 DuckDuckGo 文本搜索无需 Key。
 - **客户资产库**：支持新建、已调研、已联系、商机等状态流转，以及关键词、国家、状态筛选。
 - **批量导出**：客户库可导出 CSV、Excel 或 JSON，便于后续 CRM 或业务分析使用。
+- **账号与权限**：内置登录 / 注册，管理员与普通用户两级角色，客户数据按账号隔离；管理员可在「账户管理」中增删用户、调整角色，并在「API 设置」页在线配置密钥（即时生效，无需重启）。
 
 ## 🖼️ 项目截图
 
 <p align="center">
-  <img src="screenshots/screenshot-entry.png" alt="名片宝录入工作台" width="90%" />
+  <img src="screenshots/lib-card.png" alt="名片宝客户库 · 卡片视图" width="90%" />
 </p>
 
 <p align="center">
-  <img src="screenshots/screenshot-library.png" alt="名片宝客户库" width="90%" />
+  <img src="screenshots/mobile-login.png" alt="名片宝手机端 · 登录注册" width="24%" />
+  <img src="screenshots/mobile-entry.png" alt="名片宝手机端 · 名片录入与三步流程" width="24%" />
+  <img src="screenshots/mobile-library.png" alt="名片宝手机端 · 客户库" width="24%" />
 </p>
 
-<p align="center">
-  <img src="screenshots/screenshot-settings.png" alt="名片宝设置页，密钥已脱敏" width="90%" />
-</p>
+<p align="center"><sub>桌面端客户库（卡片视图） · 手机端 登录 / 名片录入 / 客户库</sub></p>
 
-截图中的 API Key 已全部掩码，客户库仅展示公开示例企业。
+<details>
+<summary><b>展开查看全部 16 张界面截图（桌面端 · 手机端 · 帮助中心）</b></summary>
+
+### 桌面端 · 客户库
+
+| 表格视图 | 卡片视图 |
+| --- | --- |
+| ![客户库表格视图](screenshots/lib-table.png) | ![客户库卡片视图](screenshots/lib-card.png) |
+
+### 桌面端 · 客户档案与调研报告
+
+| 客户档案 | 调研报告（空状态） |
+| --- | --- |
+| ![客户档案](screenshots/lib-profile-info.png) | ![调研报告](screenshots/lib-profile-report.png) |
+
+### 手机端 · 登录与名片录入
+
+| 登录 / 注册 | 名片录入 | 名片夹与三步流程 |
+| --- | --- | --- |
+| ![登录注册](screenshots/mobile-login.png) | ![名片录入](screenshots/mobile-entry.png) | ![名片夹](screenshots/mobile-entry-steps.png) |
+
+### 手机端 · 客户库与档案
+
+| 客户库 | 卡片视图 | 客户档案 |
+| --- | --- | --- |
+| ![手机端客户库](screenshots/mobile-library.png) | ![手机端卡片视图](screenshots/lib-mobile-card.png) | ![手机端客户档案](screenshots/lib-mobile-profile.png) |
+
+### 手机端 · 账户与导航
+
+| 账户管理 | 侧栏导航 | 用户侧栏 | 注册提示 |
+| --- | --- | --- | --- |
+| ![账户管理](screenshots/mobile-admin.png) | ![侧栏导航](screenshots/mobile-drawer.png) | ![用户侧栏](screenshots/mobile-user-drawer.png) | ![注册提示](screenshots/mobile-register-hint.png) |
+
+### 帮助中心
+
+| 客户库页使用说明 | 名片录入页使用说明 |
+| --- | --- |
+| ![帮助 · 客户库](screenshots/help-library.png) | ![帮助 · 名片录入](screenshots/help-open.png) |
+
+</details>
+
+> 截图说明：API Key 已全部掩码为 `**********`，名片缩略图已涂黑，客户库仅展示 Miniso、Pepco、Daiso、Action、Dollar Tree 等**公开示例企业**及其公开工商联系方式。
 
 ## 🚀 快速启动
 
@@ -78,11 +120,17 @@ uvicorn app:app --reload --port 7004
 
 | 变量 | 是否必需 | 用途 |
 | --- | --- | --- |
+| `DEFAULT_ADMIN_USER` / `DEFAULT_ADMIN_PASS` | 部署时建议设置 | 首次启动创建的管理员账号；**请务必改成自己的强密码** |
+| `SESSION_TTL` | 可选 | 登录会话有效期（秒），默认 14 天 |
+| `RESEARCH_CONCURRENCY` | 可选 | 同时执行的调研任务数，默认 2（调小更省额度） |
+| `DAILY_RESEARCH_QUOTA` | 可选 | 每个账号每日调研次数上限，默认 10；填 `0` 表示不限 |
 | `DEEPSEEK_API_KEY` | AI 调研时必需 | 生成结构化客户背景报告 |
 | `VISION_API_KEY` | 可选 | OpenAI 兼容视觉 OCR；为空时回退本地 Tesseract |
 | `VISION_PROVIDER` | 可选 | `openai`、`qwen`、`kimi` 或 `ollama` |
 | `SERPER_API_KEY` | 可选 | 丰富图片和视频检索结果 |
 | `BRAVE_API_KEY` / `TAVILY_API_KEY` | 可选 | 其他搜索服务 |
+
+> `DEFAULT_ADMIN_PASS` 请只写在 `.env` 中。`.env.example` 已随公开仓库发布，**不要**把真实密码填进模板文件。
 
 不要提交 `.env`、运行时 `config.json`、`data/` 或任何真实客户数据。它们已经在 `.gitignore` 中排除。
 

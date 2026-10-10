@@ -1,5 +1,6 @@
 """
 客户背景调研工具 · 后端 (FastAPI)
+- 账号系统（注册 / 登录 / 角色：admin | user）
 - 名片 OCR（视觉模型 / Tesseract 兜底）
 - 搜索富集（Serper，返回文本+图片+视频）
 - DeepSeek 调研报告生成
@@ -9,14 +10,19 @@ import os
 import io
 import re
 import json
+import hmac
+import time
+import base64
 import sqlite3
 import hashlib
+import secrets
 import datetime
+import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import requests
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response, Header, Depends
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -29,6 +35,12 @@ DB_PATH = DATA_DIR / "customer_research.db"
 
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# 会话有效期（秒），默认 14 天
+SESSION_TTL = int(os.getenv("SESSION_TTL", str(14 * 24 * 3600)))
+# 首个管理员：首次启动若用户表为空，自动创建该管理员账号（可用环境变量覆盖）
+DEFAULT_ADMIN_USER = os.getenv("DEFAULT_ADMIN_USER", "admin")
+DEFAULT_ADMIN_PASS = os.getenv("DEFAULT_ADMIN_PASS", "admin123")
 
 # ---------------- 配置（支持运行时热更新 / 设置页持久化）----------------
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -43,11 +55,29 @@ def _vision_defaults(provider):
         return "http://host.docker.internal:11434/v1", "llama3.2-vision"
     return "https://api.openai.com/v1", "gpt-4o-mini"
 
+def _read_config_file() -> Dict[str, Any]:
+    """读取 config.json 并统一把键名转成大写，便于与 .env（大写）合并覆盖。"""
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        raw = json.load(open(CONFIG_PATH, encoding="utf-8"))
+    except Exception:
+        return {}
+    return {str(k).upper(): v for k, v in (raw or {}).items()}
+
+def _as_int(v, default, lo=0, hi=10**9):
+    try:
+        n = int(float(v))
+    except Exception:
+        return default
+    return max(lo, min(hi, n))
+
 def reload_config():
-    """优先读 .env（容器环境变量），再用 config.json 覆盖（设置页写入），实现运行时热更新。"""
+    """优先读 .env（容器环境变量），再用 config.json（设置页写入）覆盖，实现运行时热更新。"""
     global DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
     global VISION_PROVIDER, VISION_API_KEY, VISION_BASE_URL, VISION_MODEL
     global SEARCH_PROVIDER, SERPER_API_KEY, BRAVE_API_KEY, TAVILY_API_KEY
+    global RESEARCH_CONCURRENCY, DAILY_RESEARCH_QUOTA
     cfg = {
         "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY", ""),
         "DEEPSEEK_BASE_URL": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
@@ -60,12 +90,11 @@ def reload_config():
         "SERPER_API_KEY": os.getenv("SERPER_API_KEY", ""),
         "BRAVE_API_KEY": os.getenv("BRAVE_API_KEY", ""),
         "TAVILY_API_KEY": os.getenv("TAVILY_API_KEY", ""),
+        # 调研队列：并发上限（默认 2）+ 每账号每日调研配额（默认 10，0 表示不限制）
+        "RESEARCH_CONCURRENCY": os.getenv("RESEARCH_CONCURRENCY", "2"),
+        "DAILY_RESEARCH_QUOTA": os.getenv("DAILY_RESEARCH_QUOTA", "10"),
     }
-    if CONFIG_PATH.exists():
-        try:
-            cfg.update(json.load(open(CONFIG_PATH, encoding="utf-8")))
-        except Exception:
-            pass
+    cfg.update(_read_config_file())
     DEEPSEEK_API_KEY = cfg.get("DEEPSEEK_API_KEY", "")
     DEEPSEEK_BASE_URL = cfg.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
     DEEPSEEK_MODEL = cfg.get("DEEPSEEK_MODEL", "deepseek-chat")
@@ -79,6 +108,8 @@ def reload_config():
     SERPER_API_KEY = cfg.get("SERPER_API_KEY", "")
     BRAVE_API_KEY = cfg.get("BRAVE_API_KEY", "")
     TAVILY_API_KEY = cfg.get("TAVILY_API_KEY", "")
+    RESEARCH_CONCURRENCY = _as_int(cfg.get("RESEARCH_CONCURRENCY"), 2, lo=1, hi=16)
+    DAILY_RESEARCH_QUOTA = _as_int(cfg.get("DAILY_RESEARCH_QUOTA"), 10, lo=0, hi=10**6)
 
 reload_config()
 
@@ -89,10 +120,28 @@ SECTION_TITLES = [
 ]
 SECTION_ICONS = ["🏢", "🛒", "📦", "💰", "🔗", "👥", "⚔️", "📰", "🎯", "📌"]
 
+# ---------------- 工具函数 ----------------
+def now_iso():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+def save_upload(image_bytes: bytes, ext: str, user_id: int) -> str:
+    """名片图片落盘到 uploads/<user_id>/，返回相对路径（含用户子目录），实现按用户分开存储。"""
+    user_dir = UPLOAD_DIR / str(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    h = hashlib.md5(image_bytes + str(time.time()).encode()).hexdigest()[:12]
+    fname = f"{h}.{ext}"
+    (user_dir / fname).write_bytes(image_bytes)
+    return f"{user_id}/{fname}"
+
 # ---------------- 数据库 ----------------
 def get_db():
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=20)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=20000")
+    except Exception:
+        pass
     return conn
 
 def init_db():
@@ -118,14 +167,161 @@ def init_db():
         images_json TEXT,
         videos_json TEXT,
         match_score TEXT,
+        owner_id INTEGER,
+        card_id INTEGER,
         created_at TEXT,
         updated_at TEXT
     )
     """)
+    # 用户表
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        display_name TEXT,
+        email TEXT,
+        password_hash TEXT NOT NULL,
+        role TEXT DEFAULT 'user',
+        active INTEGER DEFAULT 1,
+        created_at TEXT,
+        last_login TEXT
+    )
+    """)
+    # 会话表（Token 会话）
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        created_at TEXT,
+        expires_at REAL
+    )
+    """)
+    # 名片表（名片为独立实体：先存名片，再 OCR，再调研）
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS cards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        filename TEXT,
+        original_name TEXT,
+        mime TEXT,
+        size INTEGER,
+        ocr_json TEXT,
+        created_at TEXT
+    )
+    """)
+    # 调研任务队列表（DB 持久化，重启不丢；用于排序/并发限流/每日配额统计）
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS research_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        card_id INTEGER,
+        status TEXT DEFAULT 'queued',
+        payload_json TEXT,
+        result_json TEXT,
+        error TEXT,
+        created_at TEXT,
+        started_at TEXT,
+        finished_at TEXT
+    )
+    """)
+    # 兼容旧库：补充缺失列
+    ccols = [r["name"] for r in conn.execute("PRAGMA table_info(customers)").fetchall()]
+    if "owner_id" not in ccols:
+        conn.execute("ALTER TABLE customers ADD COLUMN owner_id INTEGER")
+    if "card_id" not in ccols:
+        conn.execute("ALTER TABLE customers ADD COLUMN card_id INTEGER")
     conn.commit()
     conn.close()
 
 init_db()
+
+def _cleanup_sessions():
+    try:
+        conn = get_db()
+        conn.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+# ---------------- 账号 / 鉴权 ----------------
+def hash_password(password: str, salt: str = None) -> str:
+    """scrypt 哈希（标准库，无外部依赖）。格式：scrypt$<salt>$<hash>"""
+    salt = salt or secrets.token_hex(16)
+    dk = hashlib.scrypt(password.encode("utf-8"), salt=salt.encode("utf-8"),
+                        n=2 ** 14, r=8, p=1, dklen=32)
+    return f"scrypt${salt}${dk.hex()}"
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algo, salt, _ = stored.split("$", 2)
+        if algo != "scrypt":
+            return False
+        return hmac.compare_digest(hash_password(password, salt), stored)
+    except Exception:
+        return False
+
+def ensure_default_admin():
+    """用户表为空时，创建默认管理员（账号密码可用环境变量覆盖）。"""
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+    if n == 0:
+        conn.execute(
+            "INSERT INTO users (username, display_name, email, password_hash, role, active, created_at) VALUES (?,?,?,?,?,?,?)",
+            (DEFAULT_ADMIN_USER, "管理员", "", hash_password(DEFAULT_ADMIN_PASS), "admin", 1, now_iso()))
+        conn.commit()
+    conn.close()
+
+def create_session(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    conn = get_db()
+    conn.execute("INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)",
+                 (token, user_id, now_iso(), time.time() + SESSION_TTL))
+    conn.commit(); conn.close()
+    return token
+
+def user_by_token(token: str):
+    if not token:
+        return None
+    conn = get_db()
+    row = conn.execute("SELECT * FROM sessions WHERE token=?", (token,)).fetchone()
+    if not row:
+        conn.close(); return None
+    if row["expires_at"] and row["expires_at"] < time.time():
+        conn.execute("DELETE FROM sessions WHERE token=?", (token,)); conn.commit(); conn.close()
+        return None
+    u = conn.execute("SELECT * FROM users WHERE id=?", (row["user_id"],)).fetchone()
+    conn.close()
+    if not u or not u["active"]:
+        return None
+    return dict(u)
+
+def public_user(u: Dict) -> Dict:
+    if not u:
+        return None
+    return {"id": u["id"], "username": u["username"], "display_name": u.get("display_name") or u["username"],
+            "email": u.get("email") or "", "role": u.get("role") or "user", "active": u.get("active", 1),
+            "created_at": u.get("created_at"), "last_login": u.get("last_login")}
+
+def current_user(request: Request, authorization: Optional[str] = Header(None)):
+    """从 Authorization: Bearer <token> 或 cookie 解析当前登录用户。"""
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token:
+        token = request.cookies.get("cr_token")
+    u = user_by_token(token)
+    if not u:
+        raise HTTPException(status_code=401, detail="未登录或会话已过期")
+    return u
+
+def require_admin(user: Dict = Depends(current_user)):
+    if (user.get("role") or "user") != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+# 初始化：创建默认管理员 + 清理过期会话
+ensure_default_admin()
+_cleanup_sessions()
 
 def row_to_dict(row):
     d = dict(row)
@@ -136,16 +332,6 @@ def row_to_dict(row):
             except Exception:
                 d[k] = None
     return d
-
-# ---------------- 工具函数 ----------------
-def now_iso():
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-
-def save_upload(image_bytes: bytes, ext: str) -> str:
-    h = hashlib.md5(image_bytes).hexdigest()[:12]
-    fname = f"{h}.{ext}"
-    (UPLOAD_DIR / fname).write_bytes(image_bytes)
-    return fname
 
 # ---------------- LLM / 搜索 ----------------
 def call_chat(messages, temperature=0.3, json_mode=False):
@@ -384,8 +570,136 @@ def normalize_report(obj: Dict) -> Dict:
         "risks": obj.get("risks", ""),
     }
 
+# ---------------- 调研队列（排序 + 并发限流 + 每日配额） ----------------
+# 设计：DB 持久化任务表 research_jobs + N 个后台工作线程（N = RESEARCH_CONCURRENCY）。
+#     任务先入队（queued），工作线程按 id 升序 FIFO 取任务（running → done/error）。
+#     并发上限由工作线程数决定，避免同时打爆搜索/大模型 API。
+_dispatch_lock = threading.Lock()
+_workers_started = False
+
+def _today_prefix() -> str:
+    return datetime.datetime.now().strftime("%Y-%m-%d")
+
+def quota_used(user_id: int) -> int:
+    """统计今日该账号已创建的调研任务数（用于每日配额）。"""
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) AS c FROM research_jobs WHERE owner_id=? AND created_at LIKE ?",
+                     (user_id, _today_prefix() + "%")).fetchone()["c"]
+    conn.close()
+    return n
+
+def quota_info(user_id: int) -> Dict[str, Any]:
+    used = quota_used(user_id)
+    limit = DAILY_RESEARCH_QUOTA
+    remaining = -1 if limit <= 0 else max(0, limit - used)
+    return {"date": _today_prefix(), "limit": limit, "used": used, "remaining": remaining}
+
+def queue_position(job_id: int) -> int:
+    """返回排队位置（1 表示下一个执行）；非排队状态返回 0。"""
+    conn = get_db()
+    row = conn.execute("SELECT status FROM research_jobs WHERE id=?", (job_id,)).fetchone()
+    if not row or row["status"] != "queued":
+        conn.close(); return 0
+    n = conn.execute("SELECT COUNT(*) AS c FROM research_jobs WHERE status='queued' AND id<?",
+                     (job_id,)).fetchone()["c"]
+    conn.close()
+    return n + 1
+
+def _claim_next_job():
+    with _dispatch_lock:
+        conn = get_db()
+        row = conn.execute("SELECT * FROM research_jobs WHERE status='queued' ORDER BY id ASC LIMIT 1").fetchone()
+        if not row:
+            conn.close(); return None
+        conn.execute("UPDATE research_jobs SET status='running', started_at=? WHERE id=?",
+                     (now_iso(), row["id"]))
+        conn.commit(); conn.close()
+        return dict(row)
+
+_JOB_ACTIVE = ("queued", "running")
+
+def _save_job_result(job_id: int, *, result=None, error=None, status=None):
+    conn = get_db()
+    if status is None:
+        status = "error" if error else "done"
+    conn.execute("UPDATE research_jobs SET status=?, result_json=?, error=?, finished_at=? WHERE id=?",
+                 (status, json.dumps(result, ensure_ascii=False) if result is not None else None,
+                  error, now_iso(), job_id))
+    conn.commit(); conn.close()
+
+def _do_research(info: Dict, owner_id: int, card_id: Optional[int]) -> Dict[str, Any]:
+    """真正执行一次调研：搜索 → LLM → 生成报告 → 落库为 customer，并返回结果。"""
+    sres = call_search(f"{info.get('company') or info.get('name')} {info.get('country','')} company profile")
+    search_text = sres.get("text", "")
+    images, videos = sres.get("images", []), sres.get("videos", [])
+    raw = call_chat(build_research_messages(info, search_text), json_mode=True)
+    obj = json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
+    report = normalize_report(obj)
+    if SEARCH_PROVIDER == "ddg":
+        report["search_note"] = "当前使用免费 DuckDuckGo 搜索（无需 API Key），仅文本结果，报告不含图片/视频墙；配置 Serper/Brave/Tavily 的 Key 后可获得更全数据与媒体墙。"
+    elif not (images or videos):
+        report["search_note"] = "已配置搜索源但未返回图片/视频，报告基于文本检索结果生成。"
+
+    match_score = report.get("match_score", "中")
+    conn = get_db(); now = now_iso()
+    cur = conn.execute(
+        """INSERT INTO customers (contact_name,title,company,country,phone,email,website,address,category,tags,notes,status,source,card_image,report_json,images_json,videos_json,match_score,owner_id,card_id,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (info.get("contact_name"), info.get("title"), info.get("company") or info.get("name"),
+         info.get("country"), info.get("phone"), info.get("email"), info.get("website"),
+         info.get("address"), info.get("category"), info.get("tags"), info.get("notes"),
+         "researched", "card" if card_id else "manual",
+         info.get("card_image"), json.dumps(report, ensure_ascii=False),
+         json.dumps(images, ensure_ascii=False), json.dumps(videos, ensure_ascii=False),
+         match_score, owner_id, card_id, now, now))
+    cid = cur.lastrowid
+    conn.commit(); conn.close()
+    return {"customer_id": cid, "report": report, "images": images, "videos": videos}
+
+def _run_job(job: Dict):
+    try:
+        info = json.loads(job.get("payload_json") or "{}")
+        result = _do_research(info, job["owner_id"], job.get("card_id"))
+        _save_job_result(job["id"], result=result, status="done")
+    except RuntimeError as e:
+        _save_job_result(job["id"], error=str(e))
+    except Exception as e:
+        _save_job_result(job["id"], error=f"AI 调研失败：{e}")
+
+def _research_worker(idx: int):
+    while True:
+        try:
+            job = _claim_next_job()
+            if not job:
+                time.sleep(1.2); continue
+            _run_job(job)
+        except Exception:
+            time.sleep(1.2)
+
+def start_workers():
+    """启动并发工作线程池（幂等）。并发数取自 RESEARCH_CONCURRENCY。"""
+    global _workers_started
+    if _workers_started:
+        return
+    _workers_started = True
+    # 重启后把上次遗留的 running（进程被杀）+ 未完成的 queued 复位，重新排队
+    try:
+        conn = get_db()
+        conn.execute("UPDATE research_jobs SET status='queued', started_at=NULL WHERE status IN ('queued','running')")
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+    n = max(1, RESEARCH_CONCURRENCY)
+    for i in range(n):
+        t = threading.Thread(target=_research_worker, args=(i,), daemon=True, name=f"research-worker-{i}")
+        t.start()
+    print(f"[research-queue] started {n} worker(s); daily quota = {DAILY_RESEARCH_QUOTA}")
+
 # ---------------- FastAPI ----------------
 app = FastAPI(title="客户背景调研工具")
+
+# 启动调研队列工作线程（并发限流）
+start_workers()
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -393,6 +707,200 @@ def index():
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
+# ---------------- 账号接口 ----------------
+class RegisterIn(BaseModel):
+    username: str = ""
+    password: str = ""
+    display_name: str = ""
+    email: str = ""
+
+class LoginIn(BaseModel):
+    username: str = ""
+    password: str = ""
+
+@app.post("/api/auth/register")
+def auth_register(body: RegisterIn):
+    username = (body.username or "").strip()
+    password = body.password or ""
+    if len(username) < 3:
+        raise HTTPException(400, "用户名至少 3 个字符")
+    if len(password) < 6:
+        raise HTTPException(400, "密码至少 6 位")
+    if not re.match(r"^[A-Za-z0-9_@.\-]{3,32}$", username):
+        raise HTTPException(400, "用户名只能包含字母、数字、下划线、@、.、-")
+    conn = get_db()
+    exists = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+    if exists:
+        conn.close()
+        raise HTTPException(409, "该用户名已被注册")
+    cur = conn.execute(
+        "INSERT INTO users (username, display_name, email, password_hash, role, active, created_at) VALUES (?,?,?,?,?,?,?)",
+        (username, (body.display_name or "").strip() or username, (body.email or "").strip(),
+         hash_password(password), "user", 1, now_iso()))
+    uid = cur.lastrowid
+    conn.commit(); conn.close()
+    token = create_session(uid)
+    u = user_by_token(token)
+    return {"token": token, "user": public_user(u)}
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginIn):
+    username = (body.username or "").strip()
+    conn = get_db()
+    u = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if not u or not verify_password(body.password or "", u["password_hash"]):
+        conn.close()
+        raise HTTPException(401, "用户名或密码错误")
+    if not u["active"]:
+        conn.close()
+        raise HTTPException(403, "该账号已被禁用，请联系管理员")
+    conn.execute("UPDATE users SET last_login=? WHERE id=?", (now_iso(), u["id"]))
+    conn.commit(); conn.close()
+    token = create_session(u["id"])
+    return {"token": token, "user": public_user(dict(u))}
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request, authorization: Optional[str] = Header(None)):
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token:
+        token = request.cookies.get("cr_token")
+    if token:
+        conn = get_db()
+        conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+        conn.commit(); conn.close()
+    return {"ok": True}
+
+@app.get("/api/auth/me")
+def auth_me(user: Dict = Depends(current_user)):
+    return {"user": public_user(user)}
+
+class ProfileIn(BaseModel):
+    display_name: str = ""
+    email: str = ""
+    old_password: str = ""
+    new_password: str = ""
+
+@app.put("/api/auth/profile")
+def auth_profile(body: ProfileIn, user: Dict = Depends(current_user)):
+    conn = get_db()
+    sets, args = [], []
+    if body.display_name.strip():
+        sets.append("display_name=?"); args.append(body.display_name.strip())
+    if body.email is not None:
+        sets.append("email=?"); args.append(body.email.strip())
+    if body.new_password:
+        if len(body.new_password) < 6:
+            conn.close(); raise HTTPException(400, "新密码至少 6 位")
+        if not verify_password(body.old_password or "", user["password_hash"]):
+            conn.close(); raise HTTPException(400, "原密码不正确")
+        sets.append("password_hash=?"); args.append(hash_password(body.new_password))
+    if sets:
+        args.append(user["id"])
+        conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", args)
+        conn.commit()
+    conn.close()
+    return {"ok": True}
+
+# ---------------- 管理员接口 ----------------
+class UserAdminIn(BaseModel):
+    username: str = ""
+    password: str = ""
+    display_name: str = ""
+    email: str = ""
+    role: str = "user"
+    active: int = 1
+
+@app.get("/api/admin/users")
+def admin_list_users(admin: Dict = Depends(require_admin)):
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM users ORDER BY id ASC").fetchall()
+    conn.close()
+    return [public_user(dict(r)) for r in rows]
+
+@app.post("/api/admin/users")
+def admin_create_user(body: UserAdminIn, admin: Dict = Depends(require_admin)):
+    username = (body.username or "").strip()
+    if len(username) < 3:
+        raise HTTPException(400, "用户名至少 3 个字符")
+    if len(body.password or "") < 6:
+        raise HTTPException(400, "密码至少 6 位")
+    role = body.role if body.role in ("admin", "user") else "user"
+    conn = get_db()
+    if conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone():
+        conn.close(); raise HTTPException(409, "该用户名已存在")
+    cur = conn.execute(
+        "INSERT INTO users (username, display_name, email, password_hash, role, active, created_at) VALUES (?,?,?,?,?,?,?)",
+        (username, (body.display_name or "").strip() or username, (body.email or "").strip(),
+         hash_password(body.password), role, int(body.active), now_iso()))
+    conn.commit(); conn.close()
+    return {"id": cur.lastrowid, "ok": True}
+
+@app.put("/api/admin/users/{uid}")
+def admin_update_user(uid: int, body: UserAdminIn, admin: Dict = Depends(require_admin)):
+    conn = get_db()
+    target = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    if not target:
+        conn.close(); raise HTTPException(404, "用户不存在")
+    sets, args = [], []
+    if body.display_name.strip():
+        sets.append("display_name=?"); args.append(body.display_name.strip())
+    if body.email is not None:
+        sets.append("email=?"); args.append(body.email.strip())
+    if body.role in ("admin", "user"):
+        # 不允许把最后一个管理员降级
+        if target["role"] == "admin" and body.role == "user":
+            n_admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND active=1").fetchone()["c"]
+            if n_admins <= 1:
+                conn.close(); raise HTTPException(400, "至少保留一名管理员")
+        sets.append("role=?"); args.append(body.role)
+    if body.active in (0, 1):
+        if target["role"] == "admin" and int(body.active) == 0:
+            n_admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND active=1").fetchone()["c"]
+            if n_admins <= 1:
+                conn.close(); raise HTTPException(400, "至少保留一名启用状态的管理员")
+        if target["id"] == admin["id"] and int(body.active) == 0:
+            conn.close(); raise HTTPException(400, "不能禁用当前登录的账号")
+        sets.append("active=?"); args.append(int(body.active))
+    if body.password:
+        if len(body.password) < 6:
+            conn.close(); raise HTTPException(400, "密码至少 6 位")
+        sets.append("password_hash=?"); args.append(hash_password(body.password))
+    if sets:
+        args.append(uid)
+        conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", args)
+        conn.commit()
+    conn.close()
+    return {"ok": True}
+
+@app.delete("/api/admin/users/{uid}")
+def admin_delete_user(uid: int, admin: Dict = Depends(require_admin)):
+    if uid == admin["id"]:
+        raise HTTPException(400, "不能删除当前登录的账号")
+    conn = get_db()
+    target = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    if not target:
+        conn.close(); raise HTTPException(404, "用户不存在")
+    if target["role"] == "admin":
+        n_admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND active=1").fetchone()["c"]
+        if n_admins <= 1:
+            conn.close(); raise HTTPException(400, "至少保留一名管理员")
+    conn.execute("DELETE FROM users WHERE id=?", (uid,))
+    conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+@app.get("/api/admin/stats")
+def admin_stats(admin: Dict = Depends(require_admin)):
+    conn = get_db()
+    users = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+    active = conn.execute("SELECT COUNT(*) AS c FROM users WHERE active=1").fetchone()["c"]
+    admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
+    customers = conn.execute("SELECT COUNT(*) AS c FROM customers").fetchone()["c"]
+    conn.close()
+    return {"users": users, "active_users": active, "admins": admins, "customers": customers}
 
 class ResearchIn(BaseModel):
     contact_name: str = ""
@@ -407,15 +915,104 @@ class ResearchIn(BaseModel):
     notes: str = ""
     tags: str = ""
     card_image: str = ""
-    save: bool = True
+    card_id: Optional[int] = None
 
-@app.post("/api/ocr")
-async def api_ocr(file: UploadFile = File(...)):
+# ---------------- 业务：名片（独立实体） ----------------
+def _card_public(row) -> Dict[str, Any]:
+    d = dict(row)
+    if d.get("ocr_json"):
+        try:
+            d["ocr_json"] = json.loads(d["ocr_json"])
+        except Exception:
+            d["ocr_json"] = None
+    return d
+
+def _get_card_or_403(cid: int, user: Dict):
+    conn = get_db()
+    r = conn.execute("SELECT * FROM cards WHERE id=?", (cid,)).fetchone()
+    conn.close()
+    if not r:
+        raise HTTPException(404, "名片不存在")
+    if user.get("role") != "admin" and r["owner_id"] != user["id"]:
+        raise HTTPException(403, "无权访问该名片")
+    return r
+
+@app.post("/api/cards")
+async def create_card(file: UploadFile = File(...), user: Dict = Depends(current_user)):
+    """存名片（独立功能）：上传即落盘保存，按 user_id 分目录，返回名片记录。"""
     data = await file.read()
+    if not data:
+        raise HTTPException(400, "空文件")
     ext = (file.filename or "jpg").split(".")[-1].lower().replace("jpeg", "jpg")
-    fname = save_upload(data, ext)
-    # 转 base64 供视觉模型
-    import base64
+    if ext not in ("jpg", "png", "webp", "gif", "bmp", "heic", "jfif"):
+        ext = "jpg"
+    fname = save_upload(data, ext, user["id"])
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO cards (owner_id, filename, original_name, mime, size, ocr_json, created_at) VALUES (?,?,?,?,?,?,?)",
+        (user["id"], fname, (file.filename or ""), file.content_type or "", len(data), None, now_iso()))
+    card_id = cur.lastrowid
+    conn.commit()
+    r = conn.execute("SELECT * FROM cards WHERE id=?", (card_id,)).fetchone()
+    conn.close()
+    return {"ok": True, "card": _card_public(r)}
+
+@app.get("/api/cards")
+def list_cards(limit: int = 60, scope: str = "", user: Dict = Depends(current_user)):
+    """列出名片：普通用户仅自己的；管理员默认自己的，scope=all 可看全部。"""
+    conn = get_db()
+    sql = "SELECT * FROM cards WHERE 1=1"; args = []
+    is_admin = (user.get("role") == "admin")
+    if (not is_admin) or scope != "all":
+        sql += " AND owner_id=?"; args.append(user["id"])
+    sql += " ORDER BY id DESC LIMIT ?"; args.append(max(1, min(300, int(limit or 60))))
+    rows = conn.execute(sql, args).fetchall()
+    # 每张名片附带其关联的调研客户（若有）
+    out = []
+    for r in rows:
+        d = _card_public(r)
+        c = conn.execute("SELECT id, company, status, match_score FROM customers WHERE card_id=? ORDER BY id DESC LIMIT 1",
+                         (r["id"],)).fetchone()
+        d["customer"] = dict(c) if c else None
+        out.append(d)
+    conn.close()
+    return out
+
+@app.get("/api/cards/{cid}")
+def get_card(cid: int, user: Dict = Depends(current_user)):
+    r = _get_card_or_403(cid, user)
+    conn = get_db()
+    c = conn.execute("SELECT id, company, status, match_score FROM customers WHERE card_id=? ORDER BY id DESC LIMIT 1",
+                     (cid,)).fetchone()
+    conn.close()
+    d = _card_public(r); d["customer"] = dict(c) if c else None
+    return d
+
+@app.delete("/api/cards/{cid}")
+def delete_card(cid: int, user: Dict = Depends(current_user)):
+    r = _get_card_or_403(cid, user)
+    # 删除磁盘文件（尽力而为）
+    try:
+        fp = UPLOAD_DIR / r["filename"]
+        if fp.exists():
+            fp.unlink()
+    except Exception:
+        pass
+    conn = get_db()
+    conn.execute("DELETE FROM cards WHERE id=?", (cid,))
+    # 关联客户仅解除关联，不连带删除
+    conn.execute("UPDATE customers SET card_id=NULL WHERE card_id=?", (cid,))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+@app.post("/api/cards/{cid}/ocr")
+def card_ocr(cid: int, user: Dict = Depends(current_user)):
+    """OCR（独立功能，前提是已有名片）：对已保存的名片做识别，回填字段。"""
+    r = _get_card_or_403(cid, user)
+    fp = UPLOAD_DIR / r["filename"]
+    if not fp.exists():
+        raise HTTPException(404, "名片原图已丢失")
+    data = fp.read_bytes()
     b64 = base64.b64encode(data).decode()
     fields, warn = {}, ""
     try:
@@ -432,47 +1029,77 @@ async def api_ocr(file: UploadFile = File(...)):
     if not fields:
         res = ocr_with_tesseract(data)
         fields, warn = res["fields"], res.get("warn", warn) or warn
-    return {"image": fname, "fields": fields, "warn": warn}
+    conn = get_db()
+    conn.execute("UPDATE cards SET ocr_json=? WHERE id=?", (json.dumps(fields, ensure_ascii=False), cid))
+    conn.commit(); conn.close()
+    return {"image": r["filename"], "fields": fields, "warn": warn, "card_id": cid}
+
+# ---------------- 业务：调研（入队，异步排队执行） ----------------
+@app.get("/api/quota")
+def get_quota(user: Dict = Depends(current_user)):
+    return quota_info(user["id"])
 
 @app.post("/api/research")
-def api_research(body: ResearchIn):
+def api_research(body: ResearchIn, user: Dict = Depends(current_user)):
+    """提交调研任务：不阻塞，直接入队；由后台工作线程按并发上限顺序执行。"""
     info = body.model_dump()
-    search_text = ""
-    images, videos = [], []
-    sres = call_search(f"{info.get('company') or info.get('name')} {info.get('country','')} company profile")
-    search_text = sres.get("text", "")
-    images, videos = sres.get("images", []), sres.get("videos", [])
-    try:
-        raw = call_chat(build_research_messages(info, search_text), json_mode=True)
-        obj = json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
-        report = normalize_report(obj)
-        if SEARCH_PROVIDER == "ddg":
-            report["search_note"] = "当前使用免费 DuckDuckGo 搜索（无需 API Key），仅文本结果，报告不含图片/视频墙；配置 Serper/Brave/Tavily 的 Key 后可获得更全数据与媒体墙。"
-        elif not (images or videos):
-            report["search_note"] = "已配置搜索源但未返回图片/视频，报告基于文本检索结果生成。"
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI 调研失败：{e}")
+    # 每日配额校验（0 表示不限制）
+    qi = quota_info(user["id"])
+    if qi["limit"] > 0 and qi["used"] >= qi["limit"]:
+        raise HTTPException(status_code=429,
+            detail=f"今日调研配额已用完（{qi['used']}/{qi['limit']}）。每日 0 点重置，或联系管理员调整额度。")
+    # 若带名片，校验归属并回填图片路径
+    card_id = body.card_id
+    if card_id:
+        r = _get_card_or_403(card_id, user)
+        info["card_image"] = r["filename"]
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO research_jobs (owner_id, card_id, status, payload_json, created_at) VALUES (?,?,?,?,?)",
+        (user["id"], card_id, "queued", json.dumps(info, ensure_ascii=False), now_iso()))
+    jid = cur.lastrowid
+    conn.commit(); conn.close()
+    return {"job_id": jid, "status": "queued", "position": queue_position(jid), "quota": quota_info(user["id"])}
 
-    match_score = report.get("match_score", "中")
-    saved_id = None
-    if body.save:
-        conn = get_db()
-        now = now_iso()
-        cur = conn.execute(
-            """INSERT INTO customers (contact_name,title,company,country,phone,email,website,address,category,tags,notes,status,source,card_image,report_json,images_json,videos_json,match_score,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (info.get("contact_name"), info.get("title"), info.get("company") or info.get("name"),
-             info.get("country"), info.get("phone"), info.get("email"), info.get("website"),
-             info.get("address"), info.get("category"), info.get("tags"), info.get("notes"),
-             "researched", "ocr" if info.get("card_image") else "manual",
-             info.get("card_image"), json.dumps(report, ensure_ascii=False),
-             json.dumps(images, ensure_ascii=False), json.dumps(videos, ensure_ascii=False),
-             match_score, now, now))
-        saved_id = cur.lastrowid
-        conn.commit(); conn.close()
-    return {"id": saved_id, "report": report, "images": images, "videos": videos}
+@app.get("/api/research/jobs")
+def list_research_jobs(active: int = 0, limit: int = 20, user: Dict = Depends(current_user)):
+    conn = get_db()
+    sql = "SELECT * FROM research_jobs WHERE owner_id=?"; args = [user["id"]]
+    if active:
+        sql += " AND status IN ('queued','running')"
+    sql += " ORDER BY id DESC LIMIT ?"; args.append(max(1, min(100, int(limit or 20))))
+    rows = conn.execute(sql, args).fetchall()
+    conn.close()
+    return [_job_public(dict(r)) for r in rows]
+
+@app.get("/api/research/jobs/{jid}")
+def get_research_job(jid: int, user: Dict = Depends(current_user)):
+    conn = get_db()
+    r = conn.execute("SELECT * FROM research_jobs WHERE id=?", (jid,)).fetchone()
+    conn.close()
+    if not r:
+        raise HTTPException(404, "任务不存在")
+    if user.get("role") != "admin" and r["owner_id"] != user["id"]:
+        raise HTTPException(403, "无权访问该任务")
+    d = _job_public(dict(r))
+    if d["status"] == "queued":
+        d["position"] = queue_position(jid)
+    return d
+
+def _job_public(d: Dict) -> Dict:
+    d.pop("payload_json", None)
+    if d.get("result_json"):
+        try:
+            d["result"] = json.loads(d["result_json"])
+        except Exception:
+            d["result"] = None
+    d.pop("result_json", None)
+    return d
+
+@app.get("/api/ocr")
+def _ocr_deprecated():
+    raise HTTPException(status_code=410, detail="该接口已升级：请先 POST /api/cards 存名片，再 POST /api/cards/{id}/ocr 识别。")
+
 
 # ---------------- CRUD ----------------
 class CustomerIn(BaseModel):
@@ -494,12 +1121,18 @@ class CustomerIn(BaseModel):
     images_json: str = ""
     videos_json: str = ""
     match_score: str = ""
+    card_id: Optional[int] = None
 
 @app.get("/api/customers")
-def list_customers(q: str = "", status: str = "", country: str = ""):
+def list_customers(q: str = "", status: str = "", country: str = "", scope: str = "",
+                   user: Dict = Depends(current_user)):
     conn = get_db()
     sql = "SELECT * FROM customers WHERE 1=1"
     args = []
+    # 数据范围：管理员默认看全部，可传 scope=mine 只看自己；普通用户只能看自己的
+    is_admin = (user.get("role") == "admin")
+    if (not is_admin) or scope == "mine":
+        sql += " AND owner_id=?"; args.append(user["id"])
     if q:
         sql += " AND (company LIKE ? OR contact_name LIKE ? OR email LIKE ?)"
         args += [f"%{q}%", f"%{q}%", f"%{q}%"]
@@ -513,46 +1146,70 @@ def list_customers(q: str = "", status: str = "", country: str = ""):
     return [row_to_dict(r) for r in rows]
 
 @app.get("/api/customers/{cid}")
-def get_customer(cid: int):
+def get_customer(cid: int, user: Dict = Depends(current_user)):
     conn = get_db()
     r = conn.execute("SELECT * FROM customers WHERE id=?", (cid,)).fetchone()
     conn.close()
     if not r: raise HTTPException(404, "未找到")
+    row = dict(r)
+    if user.get("role") != "admin" and row.get("owner_id") not in (None, user["id"]):
+        raise HTTPException(403, "无权访问该客户")
     return row_to_dict(r)
 
 @app.post("/api/customers")
-def create_customer(c: CustomerIn):
+def create_customer(c: CustomerIn, user: Dict = Depends(current_user)):
     conn = get_db(); now = now_iso()
     cur = conn.execute(
-        """INSERT INTO customers (contact_name,title,company,country,phone,email,website,address,category,tags,notes,status,source,card_image,report_json,images_json,videos_json,match_score,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        """INSERT INTO customers (contact_name,title,company,country,phone,email,website,address,category,tags,notes,status,source,card_image,report_json,images_json,videos_json,match_score,owner_id,card_id,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (c.contact_name, c.title, c.company, c.country, c.phone, c.email, c.website,
          c.address, c.category, c.tags, c.notes, c.status, c.source, c.card_image,
-         c.report_json, c.images_json, c.videos_json, c.match_score, now, now))
+         c.report_json, c.images_json, c.videos_json, c.match_score, user["id"], c.card_id, now, now))
     conn.commit(); conn.close()
     return {"id": cur.lastrowid}
 
 @app.put("/api/customers/{cid}")
-def update_customer(cid: int, c: CustomerIn):
+def update_customer(cid: int, c: CustomerIn, user: Dict = Depends(current_user)):
     conn = get_db()
-    conn.execute(
-        """UPDATE customers SET contact_name=?,title=?,company=?,country=?,phone=?,email=?,website=?,address=?,category=?,tags=?,notes=?,status=?,source=?,card_image=?,report_json=?,images_json=?,videos_json=?,match_score=?,updated_at=? WHERE id=?""",
-        (c.contact_name, c.title, c.company, c.country, c.phone, c.email, c.website,
-         c.address, c.category, c.tags, c.notes, c.status, c.source, c.card_image,
-         c.report_json, c.images_json, c.videos_json, c.match_score, now_iso(), cid))
+    r = conn.execute("SELECT owner_id FROM customers WHERE id=?", (cid,)).fetchone()
+    if not r:
+        conn.close(); raise HTTPException(404, "未找到")
+    if user.get("role") != "admin" and r["owner_id"] not in (None, user["id"]):
+        conn.close(); raise HTTPException(403, "无权修改该客户")
+    # 局部更新：只更新请求中显式传入的字段，避免误清空 report_json / card_id 等
+    data = c.model_dump(exclude_unset=True)
+    if "card_id" in data and data["card_id"]:
+        card = conn.execute("SELECT owner_id FROM cards WHERE id=?", (data["card_id"],)).fetchone()
+        if not card:
+            conn.close(); raise HTTPException(400, "关联的名片不存在")
+        if user.get("role") != "admin" and card["owner_id"] != user["id"]:
+            conn.close(); raise HTTPException(403, "无权关联该名片")
+    if not data:
+        conn.close(); return {"ok": True}
+    sets = [f"{k}=?" for k in data]
+    args = list(data.values())
+    sets.append("updated_at=?"); args.append(now_iso())
+    args.append(cid)
+    conn.execute(f"UPDATE customers SET {', '.join(sets)} WHERE id=?", args)
     conn.commit(); conn.close()
     return {"ok": True}
 
 @app.delete("/api/customers/{cid}")
-def delete_customer(cid: int):
+def delete_customer(cid: int, user: Dict = Depends(current_user)):
     conn = get_db()
+    r = conn.execute("SELECT owner_id FROM customers WHERE id=?", (cid,)).fetchone()
+    if not r:
+        conn.close(); raise HTTPException(404, "未找到")
+    if user.get("role") != "admin" and r["owner_id"] not in (None, user["id"]):
+        conn.close(); raise HTTPException(403, "无权删除该客户")
     conn.execute("DELETE FROM customers WHERE id=?", (cid,))
     conn.commit(); conn.close()
     return {"ok": True}
 
 @app.get("/api/export")
-def export_customers(format: str = "csv", q: str = "", status: str = "", country: str = ""):
-    rows = list_customers(q, status, country)
+def export_customers(format: str = "csv", q: str = "", status: str = "", country: str = "",
+                     scope: str = "", user: Dict = Depends(current_user)):
+    rows = list_customers(q, status, country, scope, user)
     if format == "json":
         return JSONResponse(rows)
     cols = ["id","contact_name","title","company","country","phone","email","website","address","category","tags","notes","status","match_score","created_at"]
@@ -575,11 +1232,12 @@ def export_customers(format: str = "csv", q: str = "", status: str = "", country
 def health():
     return {"status": "ok", "deepseek": bool(DEEPSEEK_API_KEY), "vision": bool(VISION_API_KEY),
             "vision_provider": VISION_PROVIDER, "search_provider": SEARCH_PROVIDER,
-            "search_key": bool(SERPER_API_KEY or BRAVE_API_KEY or TAVILY_API_KEY)}
+            "search_key": bool(SERPER_API_KEY or BRAVE_API_KEY or TAVILY_API_KEY),
+            "research_concurrency": RESEARCH_CONCURRENCY, "daily_quota": DAILY_RESEARCH_QUOTA}
 
 @app.get("/api/config")
-def get_config():
-    """返回配置；密钥仅以掩码形式下发，绝不返回明文。"""
+def get_config(admin: Dict = Depends(require_admin)):
+    """返回配置；密钥仅以掩码形式下发，绝不返回明文。仅管理员可访问。"""
     mask = lambda v: ("•" * 10) if v else ""
     return {
         "deepseek_api_key": mask(DEEPSEEK_API_KEY),
@@ -591,6 +1249,8 @@ def get_config():
         "serper_api_key": mask(SERPER_API_KEY),
         "brave_api_key": mask(BRAVE_API_KEY),
         "tavily_api_key": mask(TAVILY_API_KEY),
+        "research_concurrency": RESEARCH_CONCURRENCY,
+        "daily_quota": DAILY_RESEARCH_QUOTA,
     }
 
 class ConfigIn(BaseModel):
@@ -603,27 +1263,31 @@ class ConfigIn(BaseModel):
     serper_api_key: str = ""
     brave_api_key: str = ""
     tavily_api_key: str = ""
+    research_concurrency: str = ""
+    daily_quota: str = ""
+
+CFG_FIELDS = ["deepseek_api_key", "vision_provider", "vision_api_key", "vision_base_url",
+              "vision_model", "search_provider", "serper_api_key", "brave_api_key", "tavily_api_key"]
 
 @app.put("/api/config")
-def update_config(c: ConfigIn):
-    """保存设置页配置到 config.json 并热更新（无需重启）。空字符串表示保留原值；'__CLEAR__' 表示清空。"""
-    cfg = {}
-    if CONFIG_PATH.exists():
-        try:
-            cfg = json.load(open(CONFIG_PATH, encoding="utf-8"))
-        except Exception:
-            cfg = {}
-    fields = ["deepseek_api_key", "vision_provider", "vision_api_key", "vision_base_url",
-              "vision_model", "search_provider", "serper_api_key", "brave_api_key", "tavily_api_key"]
-    for k in fields:
+def update_config(c: ConfigIn, admin: Dict = Depends(require_admin)):
+    """保存设置页配置到 config.json 并热更新（无需重启）。空字符串表示保留原值；'__CLEAR__' 表示清空。仅管理员可操作。"""
+    cfg = _read_config_file()
+    for k in CFG_FIELDS:
         v = getattr(c, k, "")
         if v == "__CLEAR__":
-            cfg[k] = ""
+            cfg[k.upper()] = ""
         elif v == "":
             pass  # 保留原值
         else:
-            cfg[k] = v
+            cfg[k.upper()] = v
+    # 数值型配置：调研并发数 / 每日配额（留空则保留）
+    for k in ("research_concurrency", "daily_quota"):
+        v = str(getattr(c, k, "") or "").strip()
+        if v != "":
+            cfg[k.upper()] = v
     json.dump(cfg, open(CONFIG_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     reload_config()
     return {"ok": True, "search_provider": SEARCH_PROVIDER, "vision_provider": VISION_PROVIDER,
-            "deepseek": bool(DEEPSEEK_API_KEY), "vision": bool(VISION_API_KEY)}
+            "deepseek": bool(DEEPSEEK_API_KEY), "vision": bool(VISION_API_KEY),
+            "research_concurrency": RESEARCH_CONCURRENCY, "daily_quota": DAILY_RESEARCH_QUOTA}

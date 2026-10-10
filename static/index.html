@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-<title>客户背景调研 · EGO</title>
+<title>名片宝 · 客户背景调研</title>
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -25,12 +25,10 @@
       <div class="sb-group-label">工作</div>
       <div class="sb-link active" id="nav-entry" onclick="go('entry')"><span class="ic">📇</span><span class="lbl">名片宝</span></div>
       <div class="sb-link" id="nav-library" onclick="go('library')"><span class="ic">🗂️</span><span class="lbl">客户库</span></div>
-      <div class="sb-link" id="nav-settings" onclick="go('settings')"><span class="ic">⚙️</span><span class="lbl">设置</span></div>
+      <div class="sb-link admin-only" id="nav-admin" onclick="go('admin')" style="display:none"><span class="ic">👥</span><span class="lbl">账户管理</span></div>
+      <div class="sb-link admin-only" id="nav-settings" onclick="go('settings')" style="display:none"><span class="ic">🔑</span><span class="lbl">API 设置</span></div>
     </nav>
-    <div class="sb-user">
-      <div class="sb-avatar">E</div>
-      <div class="sb-user-txt"><b>EGO 外贸</b><span>展会拓客 · 调研</span></div>
-    </div>
+    <div class="sb-user" id="sbUser"></div>
   </aside>
 
   <!-- 主区 -->
@@ -41,7 +39,9 @@
         <h1 id="tb-title">名片宝</h1>
         <div class="sub" id="tb-sub"></div>
       </div>
-      <div id="tb-actions"></div>
+      <div id="tb-actions">
+        <button class="help-btn" id="helpBtn" onclick="toggleHelp()" aria-label="应用说明" title="应用说明">?</button>
+      </div>
     </header>
     <div class="content">
       <div class="content-inner">
@@ -51,13 +51,53 @@
         <section id="view-library" class="view" style="display:none"></section>
         <!-- 设置视图 -->
         <section id="view-settings" class="view" style="display:none"></section>
+        <!-- 账户管理视图（管理员） -->
+        <section id="view-admin" class="view" style="display:none"></section>
       </div>
     </div>
   </div>
 </div>
 
+<!-- 登录 / 注册（未登录时覆盖全屏） -->
+<div class="auth-gate" id="authGate" style="display:none">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="sb-logo">🔍</div>
+      <div>
+        <b>名片宝</b>
+        <span>Customer Research</span>
+      </div>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin" onclick="switchAuth('login')">登录</button>
+      <button class="auth-tab" id="tabRegister" onclick="switchAuth('register')">注册</button>
+    </div>
+    <div class="auth-form" id="authForm"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <div id="lightbox-host"></div>
+
+<!-- 应用说明弹层（右上角 ? 触发） -->
+<div class="help-pop" id="helpPop" style="display:none">
+  <div class="help-head">
+    <div class="help-title">应用说明</div>
+    <button class="help-close" onclick="toggleHelp()" aria-label="关闭">✕</button>
+  </div>
+  <div class="help-body">
+    <p class="help-intro">名片宝用于展会拓客：拍一张名片照片，系统自动完成识别与客户背景调研。</p>
+    <ol class="help-steps">
+      <li><b>上传名片</b>：点击或拖拽名片照片，即保存到本账号的「名片夹」（按账号分开存放）。</li>
+      <li><b>OCR 识别</b>：对已保存的名片自动识别，填好姓名、公司、电话、邮箱等字段，可随时重试。</li>
+      <li><b>人工校正</b>：关键字段（尤其是客户名称）可手动修改。</li>
+      <li><b>AI 调研</b>：联网搜索 + AI 生成结构化报告；也可以不传名片，直接输入客户名称调研。</li>
+      <li><b>沉淀客户库</b>：报告与名片自动关联入库，支持筛选与批量导出。</li>
+    </ol>
+    <p class="help-foot">提示：调研任务会排队执行（并发上限默认 2），每个账号每天默认最多 10 次，避免打爆搜索/大模型额度。未配置视觉模型时，OCR 自动回退本地识别，请重点核对客户名称。</p>
+  </div>
+</div>
+
 <div class="sb-overlay" id="sbOverlay" onclick="closeSidebar()"></div>
 
 <script src="/static/app.js"></script>

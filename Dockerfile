@@ -16,4 +16,6 @@ COPY static ./static
 ENV PORT=8000
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port 8000 --workers 2"]
+# 单进程运行：调研队列用进程内工作线程池控制并发（RESEARCH_CONCURRENCY），
+# 多 worker 会让并发上限翻倍并可能重复领取任务，故固定 --workers 1。
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1"]
