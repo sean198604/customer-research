@@ -17,9 +17,12 @@ function authHeaders(extra){
 }
 function api(u, opt){
   opt = opt || {};
+  // skip401：登录/注册等场景下，401 属于业务失败，不应触发「会话过期」跳转
+  const skip401 = opt.skip401 === true;
+  delete opt.skip401;
   opt.headers = authHeaders(opt.headers);
   return fetch(u, opt).then(r => {
-    if(r.status === 401){ handleUnauthorized(); return Promise.reject(r); }
+    if(r.status === 401 && !skip401){ handleUnauthorized(); return Promise.reject(r); }
     return r.ok ? r.json() : Promise.reject(r);
   });
 }
@@ -38,8 +41,23 @@ let lastSavedId = null;
 const isAdmin = () => !!(ME && ME.role === 'admin');
 
 /* ---------- 侧栏 / 路由 ---------- */
-function toggleSidebar(){ if(window.innerWidth<=820){ closeSidebar(); } else { $('#sidebar').classList.toggle('collapsed'); } }
-function openSidebar(){ const s=$('#sidebar'); s.classList.remove('collapsed'); s.classList.add('open'); $('#sbOverlay').classList.add('show'); }
+const SIDE_ICON_LEFT  = 'M15.6 9.4L12.7 12l2.9 2.6';   // 展开态：箭头指左（点击=收起）
+const SIDE_ICON_RIGHT = 'M13.1 9.4L16 12l-2.9 2.6';     // 折叠态：箭头指右（点击=展开）
+function syncSideToggle(){
+  const sb = $('#sidebar'), btn = $('#sideToggle'), arrow = $('#sideToggleArrow');
+  if(!sb || !btn) return;
+  const collapsed = sb.classList.contains('collapsed');
+  if(arrow) arrow.setAttribute('d', collapsed ? SIDE_ICON_RIGHT : SIDE_ICON_LEFT);
+  const label = collapsed ? '展开侧栏' : '折叠侧栏';
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('title', label);
+}
+function toggleSidebar(){
+  if(window.innerWidth<=820){ closeSidebar(); return; }
+  $('#sidebar').classList.toggle('collapsed');
+  syncSideToggle();
+}
+function openSidebar(){ const s=$('#sidebar'); s.classList.remove('collapsed'); s.classList.add('open'); $('#sbOverlay').classList.add('show'); syncSideToggle(); }
 function closeSidebar(){ $('#sidebar').classList.remove('open'); $('#sbOverlay').classList.remove('show'); }
 window.addEventListener('resize', ()=>{ if(window.innerWidth>820) closeSidebar(); });
 
@@ -52,11 +70,16 @@ function renderSidebarUser(){
   host.innerHTML = `
     <div class="sb-avatar">${esc(initial)}</div>
     <div class="sb-user-txt"><b>${esc(ME.display_name||ME.username)}</b><span>${roleTxt} · @${esc(ME.username)}</span></div>
-    <button class="sb-logout" title="退出登录" onclick="doLogout()">⎋</button>`;
+    <button class="sb-logout" type="button" title="退出登录" aria-label="退出登录" onclick="doLogout()">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M15 17l5-5-5-5"/><path d="M20 12H9"/><path d="M12 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"/>
+      </svg>
+    </button>`;
 }
 
 function applyRoleUI(){
   $$('.admin-only').forEach(el => el.style.display = isAdmin() ? '' : 'none');
+  const grp = $('#sbAdminLabel'); if(grp) grp.style.display = isAdmin() ? '' : 'none';
   renderSidebarUser();
 }
 
@@ -68,10 +91,10 @@ function go(view){
   ['entry','library','settings','admin'].forEach(v=>{
     const el = $('#view-'+v); if(el) el.style.display = v===view ? '' : 'none';
   });
-  if(view==='entry'){ $('#tb-title').textContent='名片宝'; $('#tb-sub').textContent=''; renderHelpBtn(); renderEntry(); }
-  else if(view==='library'){ $('#tb-title').textContent='客户库'; $('#tb-sub').textContent='所有调研过的客户，可筛选、批量导出'; renderHelpBtn(); renderLibrary(); }
-  else if(view==='settings'){ $('#tb-title').textContent='API 设置'; $('#tb-sub').textContent='配置 API Key（即时生效，无需重启）'; renderHelpBtn(); renderSettings(); }
-  else { $('#tb-title').textContent='账户管理'; $('#tb-sub').textContent='用户账号与角色权限'; renderHelpBtn(); renderAdmin(); }
+  if(view==='entry'){ $('#tb-title').textContent='名片录入'; $('#tb-sub').textContent='上传名片 · OCR 识别 · AI 调研'; renderHelpBtn(); renderEntry(); }
+  else if(view==='library'){ $('#tb-title').textContent='客户库'; $('#tb-sub').textContent='全部客户档案，可筛选与批量导出'; renderHelpBtn(); renderLibrary(); }
+  else if(view==='settings'){ $('#tb-title').textContent='API 设置'; $('#tb-sub').textContent='配置模型与搜索密钥，保存后即时生效'; renderHelpBtn(); renderSettings(); }
+  else { $('#tb-title').textContent='账户管理'; $('#tb-sub').textContent='用户账号、角色与权限'; renderHelpBtn(); renderAdmin(); }
   if(window.innerWidth<=820) closeSidebar();
 }
 
@@ -117,9 +140,14 @@ function renderEntry(){
   <div class="two-col">
     <div class="stack">
       <div class="glass">
-        <div class="card-title">📇 名片夹 <span class="title-hint">上传即保存到本账号</span></div>
+        <div class="card-title">名片夹 <span class="title-hint">上传即保存到本账号</span></div>
         <div class="dropzone" id="dz" onclick="$('#file').click()">
-          <div class="dz-ic">📇</div>
+          <div class="dz-ic">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 16V4"/><path d="M7.5 8.5 12 4l4.5 4.5"/>
+              <path d="M4.5 15v3a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3"/>
+            </svg>
+          </div>
           <div class="dz-t">点击或拖拽名片照片</div>
           <div class="dz-s">JPG · PNG · 支持手机拍照</div>
         </div>
@@ -130,7 +158,7 @@ function renderEntry(){
     </div>
 
     <div class="glass">
-      <div class="card-title">📝 基本信息 <span class="title-hint" id="formHint">可先上传名片 OCR 预填，也可直接输入名称调研</span></div>
+      <div class="card-title">基本信息 <span class="title-hint" id="formHint">可先上传名片 OCR 预填，也可直接输入名称调研</span></div>
       <div class="form-grid">
         <div class="form-row"><label>客户/公司名称 <span class="req">*</span></label><input id="f_company" placeholder="如 Dollar Tree"></div>
         <div class="form-row"><label>国家/地区 <span class="req">*</span></label><input id="f_country" placeholder="如 美国"></div>
@@ -145,9 +173,9 @@ function renderEntry(){
         <div class="form-row full"><label>标签（逗号分隔）</label><input id="f_tags" placeholder="如 重点,家居,欧美"></div>
       </div>
       <div class="entry-actions">
-        <button class="btn btn-primary" id="researchBtn" onclick="doResearch()">🔍 开始 AI 调研</button>
-        <button class="btn btn-ghost" id="ocrBtn" onclick="runOcr()" style="display:none">🔎 重新识别（OCR）</button>
-        <button class="btn btn-ghost" onclick="resetEntry()">↺ 清空重来</button>
+        <button class="btn btn-primary" id="researchBtn" type="button" onclick="doResearch()">开始 AI 调研</button>
+        <button class="btn btn-secondary" id="ocrBtn" type="button" onclick="runOcr()" style="display:none">重新识别（OCR）</button>
+        <button class="btn btn-ghost" type="button" onclick="resetEntry()">清空重来</button>
       </div>
       <div class="entry-meta"><span class="quota-pill" id="quotaPill"></span></div>
     </div>
@@ -238,84 +266,92 @@ function fillFormFromFields(f2){
 }
 
 /* ---------- API 设置（仅管理员可访问）---------- */
+let settingsScope = '#view-settings';
+const sEl = (id) => document.querySelector(settingsScope + ' #' + id);
+
 function renderSettings(){
-  renderSettingsInto('#view-settings');
+  renderSettingsInto('#view-settings', false);
 }
 
-function renderSettingsInto(sel){
+// bare=true：不再套一层卡片（用于账户管理页内嵌，避免卡片套卡片）
+function renderSettingsInto(sel, bare){
   const host = document.querySelector(sel);
   if(!host) return;
-  host.innerHTML = `
-  <div class="glass">
-    <div class="card-title">⚙️ API 配置</div>
-    <div class="note note-info" style="margin-bottom:14px">密钥仅存储于服务端 config.json，页面以掩码显示，绝不外泄。修改后即时生效，无需重启容器。</div>
+  settingsScope = sel;
+  const body = `
+    ${bare ? '' : '<div class="card-title">API 配置</div>'}
+    ${bare ? '' : '<div class="note note-info" style="margin-bottom:14px">密钥仅存储于服务端 config.json，页面以掩码显示，不会回传到浏览器。修改后即时生效，无需重启容器。</div>'}
     <div class="form-grid">
-      <div class="form-row full"><label>DeepSeek API Key（调研文本生成 · 必填）</label><input id="s_deepseek" placeholder="填入 DeepSeek Key"></div>
-      <div class="form-row"><label>视觉模型 Provider</label>
+      <div class="form-row full"><label for="s_deepseek">DeepSeek API Key（调研文本生成 · 必填）</label><input id="s_deepseek" placeholder="填入 DeepSeek Key"></div>
+      <div class="form-row"><label for="s_vprovider">视觉模型 Provider</label>
         <select id="s_vprovider">
           <option value="openai">OpenAI 兼容</option>
           <option value="qwen">通义千问 VL（免费推荐）</option>
           <option value="kimi">Kimi 视觉（免费）</option>
           <option value="ollama">本地 Ollama（离线）</option>
         </select></div>
-      <div class="form-row"><label>视觉 API Key（名片 OCR · 选填）</label><input id="s_vkey" placeholder="选填，填了 OCR 更准"></div>
-      <div class="form-row full"><label>搜索源 Provider</label>
+      <div class="form-row"><label for="s_vkey">视觉 API Key（名片 OCR · 选填）</label><input id="s_vkey" placeholder="选填，填了 OCR 更准"></div>
+      <div class="form-row full"><label for="s_sprovider">搜索源 Provider</label>
         <select id="s_sprovider">
           <option value="ddg">DuckDuckGo（免 Key）</option>
-          <option value="serper">Serper（图片+视频墙）</option>
+          <option value="serper">Serper（图片 + 视频墙）</option>
           <option value="brave">Brave Search</option>
           <option value="tavily">Tavily</option>
         </select></div>
-      <div class="form-row"><label>Serper Key</label><input id="s_serper" placeholder="选填"></div>
-      <div class="form-row"><label>Tavily Key</label><input id="s_tavily" placeholder="选填"></div>
-      <div class="form-row"><label>Brave Key</label><input id="s_brave" placeholder="选填"></div>
-      <div class="form-row"><label>调研并发数（同时执行任务数，改后需重启生效）</label><input id="s_concurrency" type="number" min="1" max="16" placeholder="默认 2"></div>
-      <div class="form-row"><label>每账号每日调研配额（0 = 不限）</label><input id="s_quota" type="number" min="0" placeholder="默认 10"></div>
+      <div class="form-row"><label for="s_serper">Serper Key</label><input id="s_serper" placeholder="选填"></div>
+      <div class="form-row"><label for="s_tavily">Tavily Key</label><input id="s_tavily" placeholder="选填"></div>
+      <div class="form-row"><label for="s_brave">Brave Key</label><input id="s_brave" placeholder="选填"></div>
+      <div class="form-row"><label for="s_concurrency">调研并发数（同时执行任务数，改后需重启生效）</label><input id="s_concurrency" type="number" min="1" max="16" placeholder="默认 2"></div>
+      <div class="form-row"><label for="s_quota">每账号每日调研配额（0 = 不限）</label><input id="s_quota" type="number" min="0" placeholder="默认 10"></div>
     </div>
-    <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap">
-      <button class="btn btn-primary" onclick="saveSettings()">💾 保存配置</button>
-      <button class="btn btn-ghost" onclick="loadSettings(${JSON.stringify(sel)})">↺ 重新载入</button>
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-primary" type="button" onclick="saveSettings()">保存配置</button>
+      <button class="btn btn-secondary" type="button" onclick="loadSettings()">重新载入</button>
     </div>
-    <div id="cfgStatus" class="cfg-status"></div>
-  </div>`;
-  loadSettings(sel);
+    <div id="cfgStatus" class="cfg-status"></div>`;
+  host.innerHTML = bare ? body : `<div class="glass">${body}</div>`;
+  loadSettings();
 }
 
-function loadSettings(sel){
+function loadSettings(){
   api('/api/config').then(d=>{
-    $('#s_vprovider').value = d.vision_provider || 'openai';
-    $('#s_sprovider').value = d.search_provider || 'ddg';
-    $('#s_deepseek').placeholder = d.deepseek_api_key ? ('当前已配置（'+d.deepseek_api_key+'）· 留空保留') : '必填 · 填入 DeepSeek Key';
-    $('#s_vkey').placeholder = d.vision_api_key ? ('当前已配置（'+d.vision_api_key+'）· 留空保留') : '选填 · 填入视觉 Key';
-    $('#s_serper').placeholder = d.serper_api_key ? ('当前已配置（'+d.serper_api_key+'）· 留空保留') : '选填 · 填入 Serper Key';
-    $('#s_tavily').placeholder = d.tavily_api_key ? ('当前已配置（'+d.tavily_api_key+'）· 留空保留') : '选填 · 填入 Tavily Key';
-    $('#s_brave').placeholder = d.brave_api_key ? ('当前已配置（'+d.brave_api_key+'）· 留空保留') : '选填 · 填入 Brave Key';
-    if($('#s_concurrency')) $('#s_concurrency').value = d.research_concurrency ?? '';
-    if($('#s_quota')) $('#s_quota').value = d.daily_quota ?? '';
+    const vp = sEl('s_vprovider'), sp = sEl('s_sprovider');
+    if(vp) vp.value = d.vision_provider || 'openai';
+    if(sp) sp.value = d.search_provider || 'ddg';
+    const setPh = (id, has, okTxt) => { const el = sEl(id); if(el) el.placeholder = has ? ('当前已配置（'+has+'）· 留空保留') : okTxt; };
+    setPh('s_deepseek', d.deepseek_api_key, '必填 · 填入 DeepSeek Key');
+    setPh('s_vkey', d.vision_api_key, '选填 · 填入视觉 Key');
+    setPh('s_serper', d.serper_api_key, '选填 · 填入 Serper Key');
+    setPh('s_tavily', d.tavily_api_key, '选填 · 填入 Tavily Key');
+    setPh('s_brave', d.brave_api_key, '选填 · 填入 Brave Key');
+    const cc = sEl('s_concurrency'); if(cc) cc.value = d.research_concurrency ?? '';
+    const q = sEl('s_quota'); if(q) q.value = d.daily_quota ?? '';
   }).catch(()=>{ /* 非管理员或读取失败时不打扰 */ });
 }
 
 function saveSettings(){
+  const val = id => { const el = sEl(id); return el ? el.value.trim() : ''; };
   const payload = {
-    deepseek_api_key: $('#s_deepseek').value.trim(),
-    vision_provider: $('#s_vprovider').value,
-    vision_api_key: $('#s_vkey').value.trim(),
+    deepseek_api_key: val('s_deepseek'),
+    vision_provider: val('s_vprovider') || 'openai',
+    vision_api_key: val('s_vkey'),
     vision_base_url: '',
     vision_model: '',
-    search_provider: $('#s_sprovider').value,
-    serper_api_key: $('#s_serper').value.trim(),
-    brave_api_key: $('#s_brave').value.trim(),
-    tavily_api_key: $('#s_tavily').value.trim(),
-    research_concurrency: $('#s_concurrency') ? $('#s_concurrency').value.trim() : '',
-    daily_quota: $('#s_quota') ? $('#s_quota').value.trim() : '',
+    search_provider: val('s_sprovider') || 'ddg',
+    serper_api_key: val('s_serper'),
+    brave_api_key: val('s_brave'),
+    tavily_api_key: val('s_tavily'),
+    research_concurrency: val('s_concurrency'),
+    daily_quota: val('s_quota'),
   };
-  $('#cfgStatus').innerHTML = '<span style="color:var(--text-weak)">保存中…</span>';
+  const st = sEl('cfgStatus');
+  if(st) st.innerHTML = '<span style="color:var(--text-weak)">保存中…</span>';
   api('/api/config', {method:'PUT', body: JSON.stringify(payload)})
     .then(d=>{
-      $('#cfgStatus').innerHTML = '<span style="color:var(--success)">✅ 已保存并即时生效。DeepSeek: '+(d.deepseek?'已配置':'未配置')+' · 视觉: '+(d.vision?'已配置':'未配置')+' · 搜索源: '+d.search_provider+'</span>';
+      if(st) st.innerHTML = '<span style="color:var(--success)">已保存并即时生效。DeepSeek：'+(d.deepseek?'已配置':'未配置')+' · 视觉：'+(d.vision?'已配置':'未配置')+' · 搜索源：'+d.search_provider+'</span>';
       toast('配置已保存');
     })
-    .catch(async e=>{ let m='保存失败'; try{ m=(await e.json()).detail||m; }catch{} $('#cfgStatus').innerHTML = '<span style="color:var(--danger)">'+esc(m)+'</span>'; });
+    .catch(async e=>{ let m='保存失败'; try{ m=(await e.json()).detail||m; }catch{} if(st) st.innerHTML = '<span style="color:var(--danger)">'+esc(m)+'</span>'; });
 }
 
 function handleFile(f){
@@ -454,14 +490,14 @@ function renderReport(d){
   <div class="rptcard">
     <div class="rpt-head">
       <div>
-        <h2>📋 ${esc(f.company||'客户')} · 调研报告</h2>
+        <h2>${esc(f.company||'客户')} · 调研报告</h2>
         <div class="meta">${esc(f.country)} · ${esc(f.category)} · ${new Date().toLocaleString('zh-CN')} ${lastSavedId?`· 档案 CR-${String(lastSavedId).padStart(4,'0')}`:''}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <span class="badge ${matchClass(r.match_score)}">匹配度：${esc(r.match_score)}</span>
-        <button class="btn btn-sm btn-ghost" onclick="window.print()">🖨️ 打印/PDF</button>
-        <button class="btn btn-sm btn-ghost" onclick="go('library')">🗂️ 去客户库</button>
-        <button class="btn btn-sm btn-ghost" onclick="resetEntry()">🔄 新调研</button>
+        <span class="badge ${matchClass(r.match_score)}">匹配度 ${esc(r.match_score)}</span>
+        <button class="btn btn-sm btn-secondary" type="button" onclick="window.print()">打印 / PDF</button>
+        <button class="btn btn-sm btn-secondary" type="button" onclick="go('library')">客户库</button>
+        <button class="btn btn-sm btn-ghost" type="button" onclick="resetEntry()">新调研</button>
       </div>
     </div>
     ${rptSummaryHTML(r)}
@@ -492,27 +528,36 @@ function renderLibrary(){
   $('#view-library').innerHTML = `
   <div class="lib-stats" id="libStats"></div>
   <div class="lib-bar">
-    <div class="search lib-search"><span class="si">🔍</span><input id="libSearch" placeholder="搜索公司 / 联系人 / 邮箱" oninput="debounceLib()"></div>
-    <select class="status-select" id="libStatus" onchange="libFilter.status=this.value; loadLib()">
+    <div class="lib-search">
+      <span class="si" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.4 15.4 21 21"/></svg>
+      </span>
+      <input id="libSearch" placeholder="搜索公司 / 联系人 / 邮箱" oninput="debounceLib()" aria-label="搜索客户">
+    </div>
+    <select class="status-select" id="libStatus" onchange="libFilter.status=this.value; loadLib()" aria-label="按状态筛选">
       <option value="">全部状态</option><option value="new">新建</option><option value="researched">已调研</option><option value="contacted">已联系</option><option value="deal">商机</option>
     </select>
-    ${isAdmin()?`<select class="status-select" id="libScope" onchange="libFilter.scope=this.value; loadLib()">
+    ${isAdmin()?`<select class="status-select" id="libScope" onchange="libFilter.scope=this.value; loadLib()" aria-label="按归属筛选">
       <option value="">全部客户（团队）</option><option value="mine">仅我的客户</option>
     </select>`:''}
     <div class="view-toggle" id="libViewToggle">
-      <button class="vt-btn active" data-v="card" onclick="setLibView('card')" title="卡片视图">▦</button>
-      <button class="vt-btn" data-v="table" onclick="setLibView('table')" title="列表视图">☰</button>
+      <button class="vt-btn active" type="button" data-v="card" onclick="setLibView('card')" title="卡片视图" aria-label="卡片视图">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/></svg>
+      </button>
+      <button class="vt-btn" type="button" data-v="table" onclick="setLibView('table')" title="列表视图" aria-label="列表视图">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>
+      </button>
     </div>
     <div class="lib-bar-right">
       <div class="exp-menu">
-        <button class="btn btn-sm btn-ghost" onclick="toggleExpMenu(event)">⬇️ 导出 ▾</button>
+        <button class="btn btn-sm btn-secondary" type="button" onclick="toggleExpMenu(event)">导出 ▾</button>
         <div class="exp-pop" id="expPop">
           <button onclick="exportLib('csv'); toggleExpMenu()">CSV 表格</button>
           <button onclick="exportLib('excel'); toggleExpMenu()">Excel 工作簿</button>
           <button onclick="exportLib('json'); toggleExpMenu()">JSON 数据</button>
         </div>
       </div>
-      <button class="btn btn-sm btn-primary" onclick="go('entry')">＋ 新建调研</button>
+      <button class="btn btn-sm btn-primary" type="button" onclick="go('entry')">新建调研</button>
     </div>
   </div>
   <div id="libHost"><div class="empty"><div class="e-ic">⏳</div>加载中…</div></div>`;
@@ -545,8 +590,8 @@ function loadLib(){
     if(!rows.length){
       host.innerHTML = `<div class="empty-lg"><div class="e-ic">🗂️</div>
         <div class="e-t">暂无客户档案</div>
-        <div class="e-s">去「名片宝」上传一张名片，即可自动生成客户档案与调研报告</div>
-        <button class="btn btn-primary" style="margin-top:16px" onclick="go('entry')">＋ 新建调研</button></div>`;
+        <div class="e-s">前往「名片录入」上传一张名片，即可自动生成客户档案与调研报告</div>
+        <button class="btn btn-primary" type="button" style="margin-top:16px" onclick="go('entry')">新建调研</button></div>`;
       return;
     }
     paintLib();
@@ -560,10 +605,10 @@ function renderLibStats(rows){
   const el = $('#libStats'); if(!el) return;
   el.innerHTML = `
     <div class="ls-card"><div class="ls-v">${total}</div><div class="ls-k">客户总数</div></div>
-    <div class="ls-card"><div class="ls-v" style="color:#4f6ef7">${cnt('researched')}</div><div class="ls-k">已调研</div></div>
-    <div class="ls-card"><div class="ls-v" style="color:#16a34a">${cnt('contacted')}</div><div class="ls-k">已联系</div></div>
-    <div class="ls-card"><div class="ls-v" style="color:#b45309">${cnt('deal')}</div><div class="ls-k">商机</div></div>
-    <div class="ls-card"><div class="ls-v" style="color:#e11d48">${high}</div><div class="ls-k">高匹配</div></div>`;
+    <div class="ls-card"><div class="ls-v">${cnt('researched')}</div><div class="ls-k">已调研</div></div>
+    <div class="ls-card"><div class="ls-v" style="color:var(--success)">${cnt('contacted')}</div><div class="ls-k">已联系</div></div>
+    <div class="ls-card"><div class="ls-v" style="color:var(--warn)">${cnt('deal')}</div><div class="ls-k">商机</div></div>
+    <div class="ls-card"><div class="ls-v" style="color:var(--primary)">${high}</div><div class="ls-k">高匹配</div></div>`;
 }
 
 function paintLib(){
@@ -608,21 +653,21 @@ function custCard(r){
     </div>
     <div class="cc-date">更新于 ${esc((r.updated_at||'').slice(0,16))}</div>
     <div class="cc-actions" onclick="event.stopPropagation()">
-      <button class="btn btn-sm btn-ghost" onclick="viewCustomer(${r.id})">查看档案</button>
-      <button class="btn btn-sm btn-icon btn-ghost" title="删除" onclick="delCustomer(${r.id})">🗑️</button>
+      <button class="btn btn-sm btn-secondary" type="button" onclick="viewCustomer(${r.id})">查看档案</button>
+      <button class="btn btn-sm btn-ghost" type="button" style="flex:0 0 auto" title="删除客户" onclick="delCustomer(${r.id})">删除</button>
     </div>
   </article>`;
 }
 
 /* —— 列表视图 —— */
 function libTableHTML(){
-  return `<div class="glass" style="padding:6px;background:rgba(255,255,255,0.82)">
+  return `<div class="glass" style="padding:0;overflow:hidden">
   <div class="table-wrap"><table class="tbl" id="libTable"><thead><tr>
-    <th>客户/公司</th><th>联系人</th><th>国家</th><th>品类</th><th>状态</th><th>匹配度</th><th>更新时间</th><th>操作</th>
+    <th>客户 / 公司</th><th>联系人</th><th>国家</th><th>品类</th><th>状态</th><th>匹配度</th><th>更新时间</th><th style="text-align:right">操作</th>
   </tr></thead><tbody>
   ${libData.map(r=>`
     <tr onclick="viewCustomer(${r.id})">
-      <td data-label="客户/公司"><div class="c-name">${esc(r.company||'—')}</div><div class="c-sub">${esc(r.tags||'')}</div></td>
+      <td data-label="客户 / 公司"><div class="c-name">${esc(r.company||'—')}</div><div class="c-sub">${esc(r.tags||'')}</div></td>
       <td data-label="联系人">${esc(r.contact_name||'—')}<div class="c-sub">${esc(r.title||'')}</div></td>
       <td data-label="国家">${esc(r.country||'—')}</td>
       <td data-label="品类">${esc(r.category||'—')}</td>
@@ -632,8 +677,8 @@ function libTableHTML(){
       <td data-label="匹配度">${r.match_score?`<span class="badge ${matchClass(r.match_score)}">${esc(r.match_score)}</span>`:'<span class="c-sub">—</span>'}</td>
       <td data-label="更新"><span class="c-sub">${esc(r.updated_at||'')}</span></td>
       <td data-label="操作"><div class="row-actions" onclick="event.stopPropagation()">
-        <button class="btn btn-sm btn-ghost" onclick="viewCustomer(${r.id})">查看</button>
-        <button class="btn btn-sm btn-icon btn-ghost" title="删除" onclick="delCustomer(${r.id})">🗑️</button>
+        <button class="btn btn-sm btn-secondary" type="button" onclick="viewCustomer(${r.id})">查看</button>
+        <button class="btn btn-sm btn-ghost" type="button" onclick="delCustomer(${r.id})">删除</button>
       </div></td>
     </tr>`).join('')}
   </tbody></table></div></div>`;
@@ -690,10 +735,10 @@ function viewCustomer(id){
             <button class="pf-close" onclick="closeProfile()" aria-label="关闭">✕</button>
           </header>
 
-          <nav class="pf-tabs">
-            <button class="pf-tab active" data-t="info" onclick="pfTab('info')">📋 客户档案</button>
-            <button class="pf-tab" data-t="report" onclick="pfTab('report')">📊 调研报告${hasReport?'':' · 无'}</button>
-            <button class="pf-tab" data-t="media" onclick="pfTab('media')">🖼️ 媒体资料<span class="pf-tab-n">${mediaCount}</span></button>
+          <nav class="pf-tabs" role="tablist">
+            <button class="pf-tab active" type="button" data-t="info" onclick="pfTab('info')">客户档案</button>
+            <button class="pf-tab" type="button" data-t="report" onclick="pfTab('report')">调研报告${hasReport?'':' · 无'}</button>
+            <button class="pf-tab" type="button" data-t="media" onclick="pfTab('media')">媒体资料<span class="pf-tab-n">${mediaCount}</span></button>
           </nav>
 
           <div class="pf-body">
@@ -707,12 +752,12 @@ function viewCustomer(id){
 
           <footer class="pf-foot">
             <div class="pf-foot-l">
-              <select class="status-select" onchange="setStatus(${r.id}, this.value)">
+              <select class="status-select" onchange="setStatus(${r.id}, this.value)" aria-label="客户状态">
                 ${['new','researched','contacted','deal'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${stLabel(s)}</option>`).join('')}
               </select>
-              <button class="btn btn-sm btn-ghost" onclick="editCustomer(${r.id})">✏️ 编辑档案</button>
+              <button class="btn btn-sm btn-secondary" type="button" onclick="editCustomer(${r.id})">编辑档案</button>
             </div>
-            <button class="btn btn-sm btn-danger" onclick="delCustomerFromProfile(${r.id})">🗑️ 删除客户</button>
+            <button class="btn btn-sm btn-danger" type="button" onclick="delCustomerFromProfile(${r.id})">删除客户</button>
           </footer>
         </div>
       </div>`;
@@ -791,18 +836,20 @@ function editCustomer(id){
     <div class="lb-scrim" onclick="if(event.target===this)closeProfile()">
       <div class="profile" style="max-width:620px" onclick="event.stopPropagation()">
         <header class="pf-head">
-          <div class="pf-avatar">✏️</div>
-          <div class="pf-id"><h2 class="pf-name">编辑客户档案</h2><div class="pf-sub">CR-${String(id).padStart(4,'0')}</div></div>
-          <button class="pf-close" onclick="closeProfile()">✕</button>
+          <div class="pf-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18 10l-4-4L4 16v4Z"/><path d="M14 6l4 4"/></svg>
+          </div>
+          <div class="pf-id"><h2 class="pf-name">编辑客户档案</h2><div class="pf-sub"><span class="pf-no">CR-${String(id).padStart(4,'0')}</span></div></div>
+          <button class="pf-close" type="button" onclick="closeProfile()" aria-label="关闭">✕</button>
         </header>
         <div class="pf-body">
           <div class="form-grid">
             ${fields.map(([k,label])=>`<div class="form-row ${['notes'].includes(k)?'full':''}"><label>${label}</label><input id="ed_${k}" value="${esc(r[k]||'')}"></div>`).join('')}
           </div>
         </div>
-        <footer class="pf-foot">
-          <button class="btn btn-sm btn-ghost" onclick="closeProfile()">取消</button>
-          <button class="btn btn-sm btn-primary" onclick="saveCustomer(${id})">保存修改</button>
+        <footer class="pf-foot" style="justify-content:flex-end">
+          <button class="btn btn-sm btn-secondary" type="button" onclick="closeProfile()">取消</button>
+          <button class="btn btn-sm btn-primary" type="button" onclick="saveCustomer(${id})">保存修改</button>
         </footer>
       </div>
     </div>`;
@@ -859,53 +906,85 @@ function rptToggleAll(open){
 }
 function rptSummaryHTML(r){
   return `<div class="rpt-hero">
-    ${r.summary?`<div class="rpt-hero-sum">📌 ${esc(r.summary)}</div>`:''}
+    ${r.summary?`<div class="rpt-hero-sum">${esc(r.summary)}</div>`:''}
     ${r.match_reason?`<div class="rpt-hero-reason"><b>匹配理由</b>${esc(r.match_reason)}</div>`:''}
   </div>`;
 }
 
 /* ================= 登录 / 注册 ================= */
 let authMode = 'login';
-function showGate(){ const g=$('#authGate'); if(g) g.style.display='flex'; }
-function hideGate(){ const g=$('#authGate'); if(g) g.style.display='none'; }
+function showGate(){ const g=$('#authGate'); if(g) g.classList.add('is-open'); }
+function hideGate(){ const g=$('#authGate'); if(g) g.classList.remove('is-open'); }
 
 function switchAuth(mode){
   authMode = mode;
-  $('#tabLogin').classList.toggle('active', mode==='login');
-  $('#tabRegister').classList.toggle('active', mode==='register');
+  const tl=$('#tabLogin'), tr=$('#tabRegister');
+  if(tl){ tl.classList.toggle('active', mode==='login'); tl.setAttribute('aria-selected', mode==='login'?'true':'false'); }
+  if(tr){ tr.classList.toggle('active', mode==='register'); tr.setAttribute('aria-selected', mode==='register'?'true':'false'); }
+  const ti=$('#authTitle'), de=$('#authDesc');
+  if(ti) ti.textContent = mode==='login' ? '登录' : '创建账号';
+  if(de) de.textContent = mode==='login' ? '使用你的账号进入客户调研中心' : '注册后为普通用户，仅可查看本人客户';
   renderAuthForm();
 }
 
 function renderAuthForm(){
   const f = $('#authForm');
+  if(!f) return;
+  const errBox = `<div class="auth-error" id="authError" role="alert"></div>`;
   if(authMode==='login'){
-    f.innerHTML = `
-      <div class="form-row"><label>用户名</label><input id="au_user" placeholder="请输入用户名" autocomplete="username"></div>
-      <div class="form-row"><label>密码</label><input id="au_pass" type="password" placeholder="请输入密码" autocomplete="current-password"></div>
-      <button class="btn btn-primary auth-submit" onclick="doLogin()">登录</button>
+    f.innerHTML = `${errBox}
+      <div class="form-row"><label for="au_user">用户名</label><input id="au_user" placeholder="请输入用户名" autocomplete="username"></div>
+      <div class="form-row"><label for="au_pass">密码</label><input id="au_pass" type="password" placeholder="请输入密码" autocomplete="current-password"></div>
+      <button class="btn btn-primary btn-block auth-submit" id="authSubmit" type="button" onclick="doLogin()">登录</button>
       <div class="auth-hint">还没有账号？<a onclick="switchAuth('register')">立即注册</a></div>`;
   } else {
-    f.innerHTML = `
-      <div class="form-row"><label>用户名 <span class="req">*</span></label><input id="au_user" placeholder="3-32 位字母/数字/下划线" autocomplete="username"></div>
-      <div class="form-row"><label>显示名称</label><input id="au_name" placeholder="如 张三（选填）"></div>
-      <div class="form-row"><label>邮箱</label><input id="au_email" placeholder="选填"></div>
-      <div class="form-row"><label>密码 <span class="req">*</span></label><input id="au_pass" type="password" placeholder="至少 6 位" autocomplete="new-password"></div>
-      <div class="form-row"><label>确认密码 <span class="req">*</span></label><input id="au_pass2" type="password" placeholder="再次输入密码" autocomplete="new-password"></div>
-      <button class="btn btn-primary auth-submit" onclick="doRegister()">注册并登录</button>
+    f.innerHTML = `${errBox}
+      <div class="form-row"><label for="au_user">用户名 <span class="req">*</span></label><input id="au_user" placeholder="3-32 位字母/数字/下划线" autocomplete="username"></div>
+      <div class="form-row"><label for="au_name">显示名称</label><input id="au_name" placeholder="如 张三（选填）"></div>
+      <div class="form-row"><label for="au_email">邮箱</label><input id="au_email" placeholder="选填"></div>
+      <div class="form-row"><label for="au_pass">密码 <span class="req">*</span></label><input id="au_pass" type="password" placeholder="至少 6 位" autocomplete="new-password"></div>
+      <div class="form-row"><label for="au_pass2">确认密码 <span class="req">*</span></label><input id="au_pass2" type="password" placeholder="再次输入密码" autocomplete="new-password"></div>
+      <button class="btn btn-primary btn-block auth-submit" id="authSubmit" type="button" onclick="doRegister()">注册并登录</button>
       <div class="auth-hint">已有账号？<a onclick="switchAuth('login')">去登录</a></div>`;
   }
+  $$('#authForm input').forEach(inp=>{
+    inp.addEventListener('keydown', e=>{
+      if(e.key==='Enter'){ e.preventDefault(); authMode==='login' ? doLogin() : doRegister(); }
+    });
+    inp.addEventListener('input', authClearErr);
+  });
   const u = $('#au_user'); if(u) u.focus();
 }
 
-function authErr(msg){ toast(msg); }
+/* 行内错误提示：保留原输入，不打断填写 */
+function authErr(msg){
+  const box = $('#authError');
+  if(box){ box.textContent = msg; box.classList.add('show'); }
+  else toast(msg);
+}
+function authClearErr(){
+  const box = $('#authError');
+  if(box){ box.textContent=''; box.classList.remove('show'); }
+}
+function authBusy(label){
+  const b = $('#authSubmit');
+  if(!b) return null;
+  b.dataset.label = b.textContent;
+  b.disabled = true; b.textContent = label;
+  return b;
+}
+function authIdle(b){ if(b){ b.disabled = false; b.textContent = b.dataset.label || '登录'; } }
 
 function doLogin(){
   const username = $('#au_user').value.trim();
   const password = $('#au_pass').value;
   if(!username || !password){ authErr('请输入用户名和密码'); return; }
-  api('/api/auth/login', {method:'POST', body: JSON.stringify({username, password})})
+  authClearErr();
+  const btn = authBusy('登录中…');
+  api('/api/auth/login', {method:'POST', body: JSON.stringify({username, password}), skip401:true})
     .then(d=>{ setToken(d.token); ME = d.user; afterLogin(); })
-    .catch(async e=>{ let m='登录失败'; try{ m=(await e.json()).detail||m; }catch{} authErr(m); });
+    .catch(async e=>{ let m='登录失败，请稍后重试'; try{ m=(await e.json()).detail||m; }catch{} authErr(m); })
+    .finally(()=>authIdle(btn));
 }
 
 function doRegister(){
@@ -914,15 +993,18 @@ function doRegister(){
   const password2 = $('#au_pass2').value;
   if(!username || !password){ authErr('请填写用户名和密码'); return; }
   if(password !== password2){ authErr('两次输入的密码不一致'); return; }
+  authClearErr();
+  const btn = authBusy('注册中…');
   api('/api/auth/register', {method:'POST', body: JSON.stringify({
     username, password, display_name: $('#au_name').value.trim(), email: $('#au_email').value.trim()
-  })})
+  }), skip401:true})
     .then(d=>{ setToken(d.token); ME = d.user; afterLogin(); toast('注册成功，欢迎使用'); })
-    .catch(async e=>{ let m='注册失败'; try{ m=(await e.json()).detail||m; }catch{} authErr(m); });
+    .catch(async e=>{ let m='注册失败，请稍后重试'; try{ m=(await e.json()).detail||m; }catch{} authErr(m); })
+    .finally(()=>authIdle(btn));
 }
 
 function doLogout(){
-  api('/api/auth/logout', {method:'POST'}).catch(()=>{}).finally(()=>{
+  api('/api/auth/logout', {method:'POST', skip401:true}).catch(()=>{}).finally(()=>{
     setToken(''); ME = null; showGate(); switchAuth('login'); toast('已退出登录');
   });
 }
@@ -937,23 +1019,23 @@ function afterLogin(){
 function renderAdmin(){
   $('#view-admin').innerHTML = `
   <div id="adminStats" class="stat-row"></div>
-  <div class="glass" style="margin-top:16px">
+  <div class="glass" style="margin-top:14px">
     <div class="card-title" style="justify-content:space-between">
-      <span>👥 用户账号</span>
-      <button class="btn btn-sm btn-primary" onclick="openUserForm()">＋ 新增用户</button>
+      <span>用户账号</span>
+      <button class="btn btn-sm btn-primary" type="button" onclick="openUserForm()">新增用户</button>
     </div>
     <div class="table-wrap"><table class="tbl" id="userTable"><thead><tr>
-      <th>用户</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th>
+      <th>用户</th><th>角色</th><th>状态</th><th>最近登录</th><th style="text-align:right">操作</th>
     </tr></thead><tbody><tr><td colspan="5"><div class="empty"><div class="e-ic">⏳</div>加载中…</div></td></tr></tbody></table></div>
   </div>
-  <div class="glass" style="margin-top:16px">
-    <div class="card-title">🔑 AI / 搜索 API Key</div>
+  <div class="glass" style="margin-top:14px">
+    <div class="card-title">API 密钥</div>
     <div class="note note-info" style="margin-bottom:14px">仅管理员可配置。密钥存储于服务端，页面以掩码显示；保存后即时生效，无需重启容器。</div>
     <div id="adminSettingsHost"></div>
   </div>`;
   loadAdminStats();
   loadUsers();
-  renderSettingsInto('#adminSettingsHost');
+  renderSettingsInto('#adminSettingsHost', true);
 }
 
 function loadAdminStats(){
@@ -981,8 +1063,8 @@ function loadUsers(){
         <td data-label="状态"><span class="badge ${u.active?'st-on':'st-off'}">${u.active?'启用':'已禁用'}</span></td>
         <td data-label="最近登录"><span class="c-sub">${esc(u.last_login||'—')}</span></td>
         <td data-label="操作"><div class="row-actions">
-          <button class="btn btn-sm btn-ghost" onclick='openUserForm(${JSON.stringify(u).replace(/'/g,"&#39;")})'>编辑</button>
-          <button class="btn btn-sm btn-icon btn-ghost" title="删除" onclick="delUser(${u.id}, '${esc(u.username)}')">🗑️</button>
+          <button class="btn btn-sm btn-secondary" type="button" onclick='openUserForm(${JSON.stringify(u).replace(/'/g,"&#39;")})'>编辑</button>
+          <button class="btn btn-sm btn-ghost" type="button" onclick="delUser(${u.id}, '${esc(u.username)}')">删除</button>
         </div></td>
       </tr>`).join('');
   }).catch(()=>toast('加载用户失败'));
@@ -1006,19 +1088,22 @@ function openUserForm(u){
       </select></div>
       <div class="form-row full"><label>${editing?'重置密码（留空则不修改）':'密码'} ${editing?'':'<span class="req">*</span>'}</label><input id="u_pass" type="password" placeholder="${editing?'留空保持原密码':'至少 6 位'}"></div>
     </div>
-    <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
-      <button class="btn btn-ghost" onclick="this.closest('.lightbox').remove()">取消</button>
-      <button class="btn btn-primary" onclick="saveUser(${editing?u.id:0})">保存</button>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+      <button class="btn btn-secondary" type="button" onclick="closeUserModal()">取消</button>
+      <button class="btn btn-primary" type="button" onclick="saveUser(${editing?u.id:0})">保存</button>
     </div>`;
   $('#lightbox-host').innerHTML = `
-    <div class="lightbox" style="background:rgba(15,23,42,0.5);align-items:flex-start;padding:40px 20px;overflow:auto" onclick="if(event.target===this)this.remove()">
-      <div class="glass" style="max-width:560px;width:100%;margin:auto" onclick="event.stopPropagation()">
-        <div class="rpt-head"><h2 style="font-size:18px">${editing?'编辑用户':'新增用户'}</h2>
-        <button class="btn btn-sm btn-ghost" onclick="this.closest('.lightbox').remove()">✕</button></div>
-        ${body}
+    <div class="lb-scrim" id="userModal" onclick="if(event.target===this)closeUserModal()">
+      <div class="profile" style="max-width:560px;height:auto;max-height:calc(100vh - 80px)" onclick="event.stopPropagation()">
+        <header class="pf-head">
+          <div class="pf-id"><h2 class="pf-name">${editing?'编辑用户':'新增用户'}</h2><div class="pf-sub"><span class="pf-no">${editing?('ID '+u.id):'创建新账号'}</span></div></div>
+          <button class="pf-close" type="button" onclick="closeUserModal()" aria-label="关闭">✕</button>
+        </header>
+        <div class="pf-body">${body}</div>
       </div>
     </div>`;
 }
+function closeUserModal(){ const m = $('#userModal'); if(m) m.remove(); }
 
 function saveUser(uid){
   const payload = {
@@ -1033,7 +1118,7 @@ function saveUser(uid){
     ? api('/api/admin/users/'+uid, {method:'PUT', body: JSON.stringify(payload)})
     : api('/api/admin/users', {method:'POST', body: JSON.stringify(payload)});
   req.then(()=>{
-    const lb = $('.lightbox'); if(lb) lb.remove();
+    closeUserModal();
     toast(uid?'已保存':'已创建');
     loadUsers(); loadAdminStats();
   }).catch(async e=>{ let m='保存失败'; try{ m=(await e.json()).detail||m; }catch{} toast(m); });
@@ -1047,6 +1132,7 @@ function delUser(id, name){
 
 /* ---------- 启动 ---------- */
 function boot(){
+  syncSideToggle();
   if(getToken()){
     api('/api/auth/me').then(d=>{ ME=d.user; applyRoleUI(); hideGate(); go('entry'); })
       .catch(()=>{ setToken(''); showGate(); switchAuth('login'); });

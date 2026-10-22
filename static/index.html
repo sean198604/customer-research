@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a365d">
 <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 <title>名片宝 · 客户背景调研</title>
 <link rel="stylesheet" href="/static/styles.css">
@@ -12,21 +13,61 @@
   <!-- 侧栏 -->
   <aside class="sidebar" id="sidebar">
     <div class="sb-brand">
-      <div class="sb-logo">🔍</div>
+      <div class="sb-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.4 15.4 21 21"/>
+        </svg>
+      </div>
       <div class="sb-brand-txt">
-        <b>客户调研中心</b>
+        <b>名片宝</b>
         <span>Customer Research</span>
       </div>
     </div>
-    <div class="sb-toggle">
-      <button onclick="toggleSidebar()"><span style="font-weight:800">»</span><span class="lbl">收起侧栏</span></button>
+    <!-- 圆形悬浮钮：圆心骑在侧栏右边线上（与品牌行垂直居中），图标随状态翻转 -->
+    <div class="collapse-row">
+      <button class="side-toggle" id="sideToggle" type="button" onclick="toggleSidebar()"
+              aria-label="折叠侧栏" title="折叠侧栏">
+        <svg class="toggle-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="3.4"/>
+          <path d="M9.4 4v16"/>
+          <path id="sideToggleArrow" d="M15.6 9.4L12.7 12l2.9 2.6"/>
+        </svg>
+      </button>
     </div>
-    <nav class="sb-nav">
-      <div class="sb-group-label">工作</div>
-      <div class="sb-link active" id="nav-entry" onclick="go('entry')"><span class="ic">📇</span><span class="lbl">名片宝</span></div>
-      <div class="sb-link" id="nav-library" onclick="go('library')"><span class="ic">🗂️</span><span class="lbl">客户库</span></div>
-      <div class="sb-link admin-only" id="nav-admin" onclick="go('admin')" style="display:none"><span class="ic">👥</span><span class="lbl">账户管理</span></div>
-      <div class="sb-link admin-only" id="nav-settings" onclick="go('settings')" style="display:none"><span class="ic">🔑</span><span class="lbl">API 设置</span></div>
+    <nav class="sb-nav" aria-label="主导航">
+      <div class="sb-group-label">工作台</div>
+      <button class="sb-link active" type="button" id="nav-entry" onclick="go('entry')">
+        <span class="ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 9.5h19"/><path d="M6.5 14h4"/>
+          </svg>
+        </span><span class="lbl">名片录入</span>
+      </button>
+      <button class="sb-link" type="button" id="nav-library" onclick="go('library')">
+        <span class="ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/>
+            <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/>
+          </svg>
+        </span><span class="lbl">客户库</span>
+      </button>
+      <div class="sb-group-label admin-only" id="sbAdminLabel" style="display:none;padding-top:14px">管理</div>
+      <button class="sb-link admin-only" type="button" id="nav-admin" onclick="go('admin')" style="display:none">
+        <span class="ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 20v-1.6a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4V20"/><circle cx="9.5" cy="7.5" r="3.5"/>
+            <path d="M21 20v-1.6a4 4 0 0 0-3-3.86"/><path d="M16.5 4.14a3.5 3.5 0 0 1 0 6.72"/>
+          </svg>
+        </span><span class="lbl">账户管理</span>
+      </button>
+      <button class="sb-link admin-only" type="button" id="nav-settings" onclick="go('settings')" style="display:none">
+        <span class="ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 7h9"/><path d="M17 7h3"/><path d="M4 17h3"/><path d="M11 17h9"/>
+            <circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/>
+          </svg>
+        </span><span class="lbl">API 设置</span>
+      </button>
     </nav>
     <div class="sb-user" id="sbUser"></div>
   </aside>
@@ -34,13 +75,19 @@
   <!-- 主区 -->
   <div class="main">
     <header class="topbar">
-      <button class="hamburger" id="hamburger" onclick="openSidebar()" aria-label="打开菜单">☰</button>
-      <div>
-        <h1 id="tb-title">名片宝</h1>
-        <div class="sub" id="tb-sub"></div>
+      <div class="tb-left">
+        <button class="hamburger" id="hamburger" onclick="openSidebar()" aria-label="打开菜单" title="菜单">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <path d="M3.5 6.5h17"/><path d="M3.5 12h17"/><path d="M3.5 17.5h17"/>
+          </svg>
+        </button>
+        <div>
+          <h1 id="tb-title">名片录入</h1>
+          <div class="sub" id="tb-sub"></div>
+        </div>
       </div>
       <div id="tb-actions">
-        <button class="help-btn" id="helpBtn" onclick="toggleHelp()" aria-label="应用说明" title="应用说明">?</button>
+        <button class="help-btn" id="helpBtn" type="button" onclick="toggleHelp()" aria-label="应用说明" title="应用说明">?</button>
       </div>
     </header>
     <div class="content">
@@ -59,31 +106,54 @@
 </div>
 
 <!-- 登录 / 注册（未登录时覆盖全屏） -->
-<div class="auth-gate" id="authGate" style="display:none">
-  <div class="auth-card">
-    <div class="auth-brand">
-      <div class="sb-logo">🔍</div>
-      <div>
-        <b>名片宝</b>
-        <span>Customer Research</span>
+<div class="auth-gate" id="authGate">
+  <div class="auth-shell">
+    <aside class="auth-aside">
+      <div class="auth-aside-top">
+        <span class="auth-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.4 15.4 21 21"/>
+          </svg>
+        </span>
+        <span class="auth-logo-txt"><b>名片宝</b><i>Customer Research</i></span>
       </div>
-    </div>
-    <div class="auth-tabs">
-      <button class="auth-tab active" id="tabLogin" onclick="switchAuth('login')">登录</button>
-      <button class="auth-tab" id="tabRegister" onclick="switchAuth('register')">注册</button>
-    </div>
-    <div class="auth-form" id="authForm"></div>
+
+      <div class="auth-aside-body">
+        <h1>展会名片<br>一键变成客户档案</h1>
+        <p>上传名片照片即可完成 OCR 识别，并联网调研生成 10 维度客户背景报告，最终沉淀为可检索、可导出的企业客户库。</p>
+        <ul class="auth-points">
+          <li><span class="ap-ic">1</span>名片按账号独立存储，互不可见</li>
+          <li><span class="ap-ic">2</span>调研任务排队执行，配额可控</li>
+          <li><span class="ap-ic">3</span>档案结构化沉淀，支持批量导出</li>
+        </ul>
+      </div>
+
+      <div class="auth-aside-foot">内部系统 · 仅限授权账号访问</div>
+    </aside>
+
+    <main class="auth-main">
+      <div class="auth-panel">
+        <h2 class="auth-title" id="authTitle">登录</h2>
+        <p class="auth-desc" id="authDesc">使用你的账号进入客户调研中心</p>
+        <div class="auth-tabs" role="tablist">
+          <button class="auth-tab active" id="tabLogin" type="button" role="tab" aria-selected="true" onclick="switchAuth('login')">登录</button>
+          <button class="auth-tab" id="tabRegister" type="button" role="tab" aria-selected="false" onclick="switchAuth('register')">注册</button>
+        </div>
+        <div class="auth-form" id="authForm"></div>
+        <div class="auth-fineprint">账号由管理员分配或自助注册，注册后默认为普通用户，仅可查看本人客户。如忘密码请联系管理员重置。</div>
+      </div>
+    </main>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div id="lightbox-host"></div>
 
 <!-- 应用说明弹层（右上角 ? 触发） -->
-<div class="help-pop" id="helpPop" style="display:none">
+<div class="help-pop" id="helpPop" style="display:none" role="dialog" aria-label="应用说明">
   <div class="help-head">
     <div class="help-title">应用说明</div>
-    <button class="help-close" onclick="toggleHelp()" aria-label="关闭">✕</button>
+    <button class="help-close" type="button" onclick="toggleHelp(false)" aria-label="关闭">✕</button>
   </div>
   <div class="help-body">
     <p class="help-intro">名片宝用于展会拓客：拍一张名片照片，系统自动完成识别与客户背景调研。</p>
@@ -94,7 +164,7 @@
       <li><b>AI 调研</b>：联网搜索 + AI 生成结构化报告；也可以不传名片，直接输入客户名称调研。</li>
       <li><b>沉淀客户库</b>：报告与名片自动关联入库，支持筛选与批量导出。</li>
     </ol>
-    <p class="help-foot">提示：调研任务会排队执行（并发上限默认 2），每个账号每天默认最多 10 次，避免打爆搜索/大模型额度。未配置视觉模型时，OCR 自动回退本地识别，请重点核对客户名称。</p>
+    <p class="help-foot">调研任务会排队执行（并发上限默认 2），每个账号每天默认最多 10 次。未配置视觉模型时，OCR 自动回退本地识别，请重点核对客户名称。</p>
   </div>
 </div>
 

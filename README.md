@@ -27,59 +27,73 @@
 ## 🖼️ 项目截图
 
 <p align="center">
-  <img src="screenshots/lib-card.png" alt="名片宝客户库 · 卡片视图" width="90%" />
+  <img src="screenshots/ui-library-desktop.png" alt="名片宝客户库 · 卡片视图" width="92%" />
 </p>
 
 <p align="center">
-  <img src="screenshots/mobile-login.png" alt="名片宝手机端 · 登录注册" width="24%" />
-  <img src="screenshots/mobile-entry.png" alt="名片宝手机端 · 名片录入与三步流程" width="24%" />
-  <img src="screenshots/mobile-library.png" alt="名片宝手机端 · 客户库" width="24%" />
+  <img src="screenshots/ui-login-mobile.png" alt="名片宝手机端 · 登录" width="23%" />
+  <img src="screenshots/ui-entry-mobile.png" alt="名片宝手机端 · 名片录入" width="23%" />
+  <img src="screenshots/ui-library-mobile.png" alt="名片宝手机端 · 客户库" width="23%" />
 </p>
 
 <p align="center"><sub>桌面端客户库（卡片视图） · 手机端 登录 / 名片录入 / 客户库</sub></p>
 
 <details>
-<summary><b>展开查看全部 16 张界面截图（桌面端 · 手机端 · 帮助中心）</b></summary>
+<summary><b>展开查看全部 20 张界面截图（桌面端 · 手机端 · 小屏适配 · 侧栏折叠）</b></summary>
+
+### 桌面端 · 名片录入
+
+![名片录入工作台](screenshots/ui-entry-desktop.png)
+
+### 桌面端 · 登录与注册
+
+![登录](screenshots/ui-login-desktop.png)
 
 ### 桌面端 · 客户库
 
-| 表格视图 | 卡片视图 |
+| 卡片视图 | 表格视图 |
 | --- | --- |
-| ![客户库表格视图](screenshots/lib-table.png) | ![客户库卡片视图](screenshots/lib-card.png) |
+| ![客户库卡片视图](screenshots/ui-library-desktop.png) | ![客户库表格视图](screenshots/ui-table-desktop.png) |
 
-### 桌面端 · 客户档案与调研报告
+### 桌面端 · 客户档案与账户管理
 
-| 客户档案 | 调研报告（空状态） |
+| 客户档案抽屉 | 账户管理与 API 密钥 |
 | --- | --- |
-| ![客户档案](screenshots/lib-profile-info.png) | ![调研报告](screenshots/lib-profile-report.png) |
+| ![客户档案](screenshots/ui-profile-desktop.png) | ![账户管理](screenshots/ui-admin-desktop.png) |
 
-### 手机端 · 登录与名片录入
+### 桌面端 · API 设置与应用说明
 
-| 登录 / 注册 | 名片录入 | 名片夹与三步流程 |
+| API 设置 | 应用说明浮层 |
+| --- | --- |
+| ![API 设置](screenshots/ui-settings-desktop.png) | ![应用说明](screenshots/ui-help-desktop.png) |
+
+### 手机端 · 登录与注册
+
+| 登录 | 注册 | 登录失败提示 |
 | --- | --- | --- |
-| ![登录注册](screenshots/mobile-login.png) | ![名片录入](screenshots/mobile-entry.png) | ![名片夹](screenshots/mobile-entry-steps.png) |
+| ![手机端登录](screenshots/ui-login-mobile.png) | ![手机端注册](screenshots/ui-register-mobile.png) | ![登录失败提示](screenshots/ui-login-error.png) |
 
-### 手机端 · 客户库与档案
+### 手机端 · 名片录入与客户库
 
-| 客户库 | 卡片视图 | 客户档案 |
+| 名片录入 | 客户库 | 客户档案 |
 | --- | --- | --- |
-| ![手机端客户库](screenshots/mobile-library.png) | ![手机端卡片视图](screenshots/lib-mobile-card.png) | ![手机端客户档案](screenshots/lib-mobile-profile.png) |
+| ![手机端名片录入](screenshots/ui-entry-mobile.png) | ![手机端客户库](screenshots/ui-library-mobile.png) | ![手机端客户档案](screenshots/ui-profile-mobile.png) |
 
-### 手机端 · 账户与导航
+### 小屏适配（360 / 768 宽度）
 
-| 账户管理 | 侧栏导航 | 用户侧栏 | 注册提示 |
+| 360 · 名片录入 | 360 · 注册 | 360 · 客户库 | 768 · 名片录入 |
 | --- | --- | --- | --- |
-| ![账户管理](screenshots/mobile-admin.png) | ![侧栏导航](screenshots/mobile-drawer.png) | ![用户侧栏](screenshots/mobile-user-drawer.png) | ![注册提示](screenshots/mobile-register-hint.png) |
+| ![360 名片录入](screenshots/ui-entry-360.png) | ![360 注册](screenshots/ui-register-360.png) | ![360 客户库](screenshots/ui-library-360.png) | ![768 名片录入](screenshots/ui-entry-768.png) |
 
-### 帮助中心
+### 侧栏折叠钮（展开 / 收起）
 
-| 客户库页使用说明 | 名片录入页使用说明 |
+| 展开态 | 收起态 |
 | --- | --- |
-| ![帮助 · 客户库](screenshots/help-library.png) | ![帮助 · 名片录入](screenshots/help-open.png) |
+| ![侧栏展开](screenshots/ui-toggle-expanded.png) | ![侧栏收起](screenshots/ui-toggle-collapsed.png) |
 
 </details>
 
-> 截图说明：API Key 已全部掩码为 `**********`，名片缩略图已涂黑，客户库仅展示 Miniso、Pepco、Daiso、Action、Dollar Tree 等**公开示例企业**及其公开工商联系方式。
+> 截图说明：API Key 已全部掩码为 `**********`，名片缩略图为空白占位，客户库仅展示 Miniso、Pepco、Home Bargains、Daiso、Action、Dollar Tree 等**公开示例企业**及其公开工商联系方式。
 
 ## 🚀 快速启动
 
